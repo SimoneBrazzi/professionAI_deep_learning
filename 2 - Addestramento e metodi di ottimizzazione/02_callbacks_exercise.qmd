@@ -1,0 +1,161 @@
+---
+title: "Addestramento e metodi di ottimizzazione"
+author: "Simone Brazzi"
+#jupyter: python3
+format:
+  html:
+    theme:
+      dark: "darkly"
+      light: "flatly"
+execute: 
+  warning: false
+self_contained: true
+toc: true
+toc-depth: 2
+number-sections: true
+---
+
+Partiamo dal solito BreastCancer dataset e modello (codice sotto)
+
+Scrivi TRE callbacks
+
+(1) un batch logger che salvi la loss ad ogni batch
+(2) un learning rate scheduler che setti il LR a 0.001 in epoche pari e 0.005 in epoche dispari
+(3) un early stopper che fermi il training se la validation accuracy sale sopra.
+Fai girare il training con 100 epoche e le tre callbacks
+
+Visualizza, allineandole, le loss per batch ed epoca
+
+
+```{python}
+#say no to warnings!
+import warnings
+warnings.filterwarnings("ignore")
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+import tensorflow as tf
+import numpy as np
+from sklearn import datasets
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.backend import clear_session
+import matplotlib.pyplot as plt
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import InputLayer,Dense
+bc = datasets.load_breast_cancer()
+x = bc.data
+y = bc.target
+xtrain, xtest, ytrain, ytest = \
+    train_test_split(x, y, test_size = 0.25, stratify=y)
+    
+def get_model():
+    model = Sequential()
+    model.add(Dense(units=16, activation='relu', input_dim=30))
+    model.add(Dense(units=1, activation='sigmoid'))
+    model.compile(
+        optimizer='adam',
+        loss='binary_crossentropy', metrics=['accuracy'])
+    return model
+```
+
+
+```{python}
+clear_session()
+model = get_model()
+history = model.fit(xtrain, ytrain, epochs=5,
+            validation_data=(xtest, ytest), verbose=0);
+```
+
+## Da qui in poi!
+
+
+## a batch logger which saves the loss at each batch.
+
+```{python}
+class BatchLogger(tf.keras.callbacks.Callback):
+  
+  
+  def __init__(self):
+    # list to save the losses
+    self.losses = []
+    
+  def on_train_batch_end(self, batch, logs=None):
+        print(f"...Training: end of batch {batch}; got loss: {logs['loss']}")
+        self.losses.append(logs["loss"])
+
+clear_session()
+model = get_model()
+mycb = BatchLogger()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=5,
+  validation_data=(xtest, ytest),
+  verbose=0,
+  callbacks=[mycb]
+  );
+mycb.losses
+```
+
+
+## un learning rate scheduler che setti il LR a 0.001 in epoche pari e 0.005 in epoche dispari
+
+```{python}
+class LRScheduler(tf.keras.callbacks.Callback):
+  
+  def on_epoch_begin(self, epoch, *args, **kwargs):
+    if epoch % 2 == 0:
+      self.model.optimizer.learning_rate.assign(0.001)
+    else:
+      self.model.optimizer.learning_rate.assign(0.005)
+      
+    print("\nEpoch", epoch, "has begun")
+    print("Learning rate", self.model.optimizer.learning_rate.numpy(), ".")
+
+clear_session()
+model = get_model()
+mycb = LRScheduler()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=5,
+  validation_data=(xtest, ytest),
+  verbose=0,
+  callbacks=[mycb]
+  );
+```
+
+
+
+## un early stopper che fermi il training se la validation accuracy sale sopra 0.9.
+
+```{python}
+class EarlyStopper(tf.keras.callbacks.Callback):
+  
+  def on_epoch_end(self, epoch, logs, **kwargs):
+    print(f"Epoch {epoch} has ended.")
+    print(f"MY_val_accuracy {logs['val_accuracy']}")
+    if logs["val_accuracy"] > 0.9:
+      self.model.stop_training = True
+
+clear_session()
+model = get_model()
+mycb = EarlyStopper()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=100,
+  validation_data=(xtest, ytest),
+  verbose=0,
+  callbacks=[mycb]
+  );
+```
+
+
+
+
+
+
+
+

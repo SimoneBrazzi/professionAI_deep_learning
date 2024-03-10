@@ -1,0 +1,165 @@
+```{r}
+library("reticulate")
+use_virtualenv("myenv")
+```
+
+# Esercitazione
+
+### Prendiamo sempre il dataset MNIST. Facciamo un classificatore pari-dispari.
+- Prendi il dataset crea delle labels binarie
+- Fai split e preprocessing come nel notebook precedente
+- Crea un MLP come nel notebook precedente ed addestralo
+
+### Singolo neurone di output
+- Per classificazione binaria, posso anche costruire la rete usando UN neurone di output, sigmoide e binary crossentropy!
+- Crea ed addestra un MLP di questo tipo, senza toccare il dataset
+
+### API funzionali
+- sempre senza toccare il dataset, ricrea il modello precedente usando le API funzionali ed addestralo
+Va BENISSIMO fare copia-incolla dai notebook precedenti:
+     → non devi imparare cose a memoria, devi capire come funzionano e sapere dove copiare, cosa modifiare e come!
+Riesci a superare tutti gli errori ed a ottenere delle buone test accuracy?
+
+```{python}
+import warnings
+warnings.filterwarnings('ignore')
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
+import numpy as np
+import matplotlib.pyplot as plt
+# load mnist dataset
+from tensorflow.keras.datasets.mnist import load_data as mnist_load
+# import models and layers
+from tensorflow.keras import Sequential, Model
+from tensorflow.keras.layers import InputLayer, Dense, Input
+# clear session
+from tensorflow.keras.backend import clear_session
+# categorical
+from tensorflow.keras.utils import to_categorical
+# train test split and confusion matrix
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
+```
+
+
+# Classificatore pari-dispari
+
+```{python}
+(xtrain, ytrain), (xtest, ytest) = mnist_load()
+```
+
+```{python}
+(xtrain.shape, ytrain.shape), (xtest.shape, ytest.shape)
+```
+
+## Prendi il dataset crea delle labels binarie
+Classificazione binaria pari-dispari richiede convertire le labels in 0 e 1. usando la funzione modulo abbiamo 0 per i numeri pari e 1 per i numeri dispari.
+
+```{python}
+ytrain_bin = ytrain % 2
+ytest_bin = ytest % 2
+```
+
+
+## Fai split e preprocessing come nel notebook precedente
+
+### Preprocessing
+Quello che dobbiamo fare con le immagini è:
+- Reshape: le immagini sono 28x28, le dobbiamo trasformare in un vettore di 784 elementi.
+- Normalizzare: i valori dei pixel vanno da 0 a 255. Con la normalizzazione li portiamo da 0 a 1.
+
+```{python}
+num_datapoints_train = xtrain.shape[0]
+num_datapoints_test = xtest.shape[0]
+xtrain_flat = np.reshape(xtrain, [num_datapoints_train, -1])
+xtest_flat = np.reshape(xtest, [num_datapoints_test, -1])
+xtrain_flat = xtrain_flat.astype("float32") / 255
+xtest_flat = xtest_flat.astype("float32") / 255
+```
+
+
+## Crea un MLP come nel notebook precedente ed addestralo
+
+Creo il modello
+
+```{python}
+def get_mnist_mlp():
+  clear_session()
+  model = Sequential()
+  model.add(InputLayer(input_shape=(784,)))
+  model.add(Dense(1000, activation="relu"))
+  model.add(Dense(1000, activation="relu"))
+  model.add(Dense(2, activation="softmax"))
+  return model
+
+model = get_mnist_mlp()
+model.summary()
+```
+
+```{python}
+model.compile(
+  loss="sparse_categorical_crossentropy",
+  metrics=["accuracy"]
+)
+model.fit(xtrain_flat, ytrain_bin, verbose=0, epochs=1)
+model.evaluate(xtest_flat, ytest_bin)
+```
+
+# Singolo neurone di output
+
+## Per classificazione binaria, posso anche costruire la rete usando UN neurone di output, sigmoide e binary crossentropy!
+
+```{python}
+def get_one_neuron_model():
+  clear_session()
+  model = Sequential()
+  model.add(InputLayer(input_shape=(784,)))
+  model.add(Dense(1000, activation="relu"))
+  model.add(Dense(1000, activation="relu"))
+  model.add(Dense(1, activation="sigmoid"))
+  return model
+```
+
+## Crea ed addestra un MLP di questo tipo, senza toccare il dataset
+
+```{python}
+
+model1 = get_one_neuron_model()
+model1.compile(
+  loss="binary_crossentropy",
+  metrics=["accuracy"]
+)
+model1.fit(xtrain_flat, ytrain_bin, verbose=0, epochs=1)
+model1.evaluate(xtest_flat, ytest_bin)
+```
+
+# Modello funzionale
+
+```{python}
+def get_functional_model():
+  
+  clear_session()
+  input_layer = Input(shape=(784,))
+  hidden_layer_one = Dense(1000, activation="relu")(input_layer)
+  hidden_layer_two = Dense(1000, activation="relu")(hidden_layer_one)
+  output_layer = Dense(1, activation="sigmoid")(hidden_layer_two)
+  model = Model(inputs=input_layer, outputs=output_layer)
+  return model
+model_func = get_functional_model()
+```
+
+```{python}
+model_func.compile(
+  loss="binary_crossentropy",
+  metrics=["accuracy"]
+)
+```
+
+```{python}
+model_func.fit(xtrain_flat, ytrain_bin, verbose=0, epochs=1)
+model_func.evaluate(xtest_flat, ytest_bin)
+```
+

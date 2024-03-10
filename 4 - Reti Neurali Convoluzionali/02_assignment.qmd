@@ -1,0 +1,483 @@
+---
+title: "CNN Assignment"
+author: "Simone Brazzi"
+jupyter: "r-tf"
+format:
+  html:
+    theme:
+      dark: "darkly"
+      light: "flatly"
+execute: 
+  warning: false
+self_contained: true
+toc: true
+toc-depth: 2
+number-sections: true
+editor: 
+  markdown: 
+    wrap: sentence
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# Carica il dataset food/no_food
+
+(puoi fare un ciclo for o usare flow_from_directory)
+
+```{python}
+import warnings
+warnings.filterwarnings('ignore')
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+from tensorflow.keras.preprocessing.image import load_img, array_to_img, img_to_array
+from tensorflow.keras.applications import resnet50, ResNet50
+from tensorflow.keras import Model, Sequential, Input
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout, Flatten
+from tensorflow.keras.backend import clear_session
+from tensorflow.keras.utils import image_dataset_from_directory
+```
+
+First of all, load the dataset using the `image_dataset_from_directory` function. This function will return a `tf.data.Dataset` object that can be used to train the model.
+
+```{python}
+os.listdir("/Users/simonebrazzi/datasets/food-vs-non-food-image-classification/")
+
+os.listdir("/Users/simonebrazzi/datasets/food-vs-non-food-image-classification/training/")
+```
+
+```{python}
+path = "/Users/simonebrazzi/datasets/food-vs-non-food-image-classification/"
+labels = "inferred"
+label_mode = "int"
+batch_size = 32
+image_size = (224, 224)
+color_mode = "rgb"
+shuffle = True
+```
+
+```{python}
+train_dataset = image_dataset_from_directory(
+  directory=path + "training/",
+  labels=labels,
+  label_mode=label_mode,
+  color_mode=color_mode,
+  batch_size=batch_size,
+  image_size=image_size,
+  shuffle=shuffle
+  )
+
+class_names = train_dataset.class_names
+print(class_names)
+```
+
+```{python}
+# list all method of train_dataset
+[x for x in dir(train_dataset) if not x.startswith('__') | x.startswith('_')]
+```
+
+
+```{python}
+train_dataset.as_numpy_iterator().next()[0].shape
+train_dataset.as_numpy_iterator().next()[1].shape
+```
+
+With this code, we can see that the `train_dataset` is a `tf.data.Dataset` object that contains a batch of images. The shape of the batch is `(32, 224, 224, 3)`, which means that the batch contains 32 images with a size of 224x224 pixels and 3 channels (RGB).
+
+`image_dataset_from_directory` load these images off disk using efficient input pipelines, which are important for performance. The function also allows us to specify the batch size and the image size. The `shuffle` parameter is set to `True` to shuffle the images.
+
+```{python}
+validation_dataset = image_dataset_from_directory(
+  directory=path + "validation/",
+  labels=labels,
+  label_mode=label_mode,
+  color_mode=color_mode,
+  batch_size=batch_size,
+  image_size=image_size,
+  shuffle=shuffle
+)
+```
+
+Check the shape of the validation dataset.
+
+```{python}
+validation_dataset.as_numpy_iterator().next()[0].shape
+validation_dataset.as_numpy_iterator().next()[1].shape
+```
+
+Plot the first 9 images from the training dataset. Use class_names to check the labels.
+```{python}
+class_names = train_dataset.class_names
+
+plt.figure(figsize=(10, 10))
+for images, labels in train_dataset.take(1):
+  for i in range(9):
+    ax = plt.subplot(3, 3, i + 1)
+    plt.imshow(images[i].numpy().astype("uint8"))
+    plt.title(class_names[labels[i]])
+    plt.axis("off")
+plt.show()
+plt.close()
+```
+
+
+# Usa sempre ResNet50 per ottenere una matrice di features (train e test)
+
+(devi ottenere due matrici di dimensione (3000, 2048) e (1000, 2048))
+
+## Import ResNet50
+
+```{python}
+base_model = ResNet50(
+  weights='imagenet',
+  include_top=False
+)
+```
+
+Check example batch of images and the shape of the output.
+```{python}
+image_batch, label_batch = next(iter(train_dataset))
+feature_batch = base_model(image_batch)
+#print(feature_batch.shape)
+
+# batch size, height, width, channels
+next(iter(train_dataset))[0].shape
+# shape of the output of the base model -> feature_batch
+base_model(next(iter(train_dataset))[0]).shape
+```
+
+Define data augmentation layer.
+```{python}
+data_augmentation = tf.keras.Sequential([
+  tf.keras.layers.RandomFlip('horizontal'),
+  tf.keras.layers.RandomRotation(0.2),
+])
+```
+**Note**: These layers are *active* only during *training*, when you call Model.fit. They are inactive when the model is used in inference mode in Model.evaluate, Model.predict, or Model.call.
+
+Preprocess input using resnet50 preprocess function.
+```{python}
+preprocess_input = resnet50.preprocess_input
+```
+
+## Feature extraction
+
+### Freeze the base model
+this could be done after callling the base model.
+
+```{python}
+base_model.trainable = False
+```
+
+```{python}
+base_model.summary()
+```
+
+### Add a classification head
+
+Use the `GlobalAveragePooling2D` layer to convert the features into a single 2048-element vector per image.
+
+```{python}
+global_average_layer = GlobalAveragePooling2D()
+feature_batch_avg = global_average_layer(feature_batch)
+feature_batch_avg.shape
+```
+
+Apply a `Dense` layer to convert these features into a single prediction per image. You don't need an activation function here because this prediction will be treated as a `logit`, or a raw prediction value. Positive numbers predict class 1, negative numbers predict class 0.
+
+```{python}
+prediction_layer = Dense(1)
+prediction_batch = prediction_layer(feature_batch_avg)
+prediction_batch.shape
+```
+
+Build a model by chaining together the data augmentation, rescaling, base_model and feature extractor layers using the `Functional API`.
+
+```{python}
+inputs = Input(shape=(224,224,3))
+x = data_augmentation(inputs)
+x = preprocess_input(x)
+x = base_model(x, training=False) # training=False because the model contains a BatchNormalization layer
+x = global_average_layer(x)
+x = Dropout(0.2)(x) # to prevent overfitting
+outputs = prediction_layer(x)
+model = Model(inputs, outputs)
+
+model.summary()
+```
+
+### Compile the model
+The loss is a binary cross-entropy because:
+- the model is outputting a single probability score for each image.
+- the label is binary.
+- the model provides a linear output.
+```{python}
+model.compile(
+  optimizer='adam',
+  loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
+  metrics=['accuracy']
+)
+```
+
+```{python}
+feat_train = model.predict(train_dataset)
+feat_train.shape
+```
+
+```{python}
+loss0, accuracy0 = model.evaluate(validation_dataset)
+print(f"initial loss: {loss0}")
+print(f"initial accuracy: {accuracy0}")
+```
+
+
+# Addestra una regressione logistica
+
+(esatto, la resnet fa heavy lifting.. e sulle features basta un modello molto semplice)
+
+```{python}
+history = model.fit(
+  train_dataset,
+  epochs=10,
+  validation_data=validation_dataset,
+  verbose=1
+)
+```
+
+
+```{python}
+def plot(history):
+  acc = history.history["accuracy"]
+  val_acc = history.history["val_accuracy"]
+  
+  loss = history.history["loss"]
+  val_loss = history.history["val_loss"]
+  
+  epochs = range(1, len(acc) + 1)
+  
+  plt.figure(figsize=(10, 10))
+  plt.subplot(2, 1, 1)
+  plt.plot(epochs, acc, label="Training accuracy")
+  plt.plot(epochs, val_acc, label="Validation accuracy")
+  plt.ylabel("Accuracy")
+  plt.ylim([min(plt.ylim()), 1])
+  plt.title("Training and Validation Accuracy")
+  
+  plt.subplot(2, 1, 2)
+  plt.plot(epochs, acc, label="Training loss")
+  plt.plot(epochs, val_acc, label="Validation loss")
+  plt.ylabel("Loss")
+  plt.ylim([min(plt.ylim()), 1])
+  plt.title("Training and Validation Loss")
+  plt.legend()
+  plt.xlabel("Epochs")
+  plt.tight_layout()
+  
+  plt.show()
+
+plot(history)
+plt.close()
+```
+
+
+# Riesci ad avere >.75 in test?
+
+```{python}
+test_loss, test_acc = model.evaluate(validation_dataset)
+print(f"Test accuracy: {test_acc:.3f}")
+print(f"Test loss: {test_loss:.3f}")
+```
+
+
+# Visualizza alcune immagini, la ground truth, e la predizione
+
+```{python}
+class_names_val = validation_dataset.class_names
+
+# visualize images, ground truth and predictions
+plt.figure(figsize=(15, 15))
+for images, label in validation_dataset.take(1):
+  for i in range(9):
+    ax = plt.subplot(3, 3, i + 1)
+    plt.imshow(images[i].numpy().astype("uint8"))
+    
+    # plt.title ground truth and prediction
+    plt.title(f"Predication: {class_names_val[int(model.predict(images[i][tf.newaxis])[0, 0] > 0.5)]} | Ground Truth: {class_names_val[label[i]]} ")
+    
+    plt.axis("off")
+plt.show()
+plt.close()
+```
+
+# Solution
+
+## Dataset
+```{python}
+path = "/Users/simonebrazzi/datasets/food-vs-non-food-image-classification/"
+
+os.listdir(path)
+os.listdir(path + "training/")
+```
+
+```{python}
+print(f"Training \nnon food: {len(os.listdir(path + 'training/non_food/'))} \nfood: {len(os.listdir(path + 'training/food/'))}")
+
+print(f"Validation \nnon food: {len(os.listdir(path + 'validation/non_food/'))} \nfood: {len(os.listdir(path + 'validation/food/'))}")
+```
+
+Avremmo potuto addestrare una CNN da zero, ma il transfer learning come prima strada rimane la scelta più efficiente. Come meno effort e tempo si scopre se è una strada che funziona. Se fallisce, allora si può montare una CNN da zero.
+
+```{python}
+img_non_food = os.listdir(path + "training/non_food/")[10]
+plt.imshow(load_img(path + "training/non_food/" + img_non_food))
+plt.show()
+
+```
+
+```{python}
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+
+train_data = ImageDataGenerator(
+  preprocessing_function=tf.keras.applications.resnet50.preprocess_input
+)
+xbatch, ybatch = next(train_data.flow_from_directory(
+  path + "training/",
+  target_size=(224, 224)
+  ))
+xbatch.shape, ybatch.shape
+```
+
+```{python}
+xtrain, ytrain = next(
+  train_data.flow_from_directory(
+  path + "training/",
+  target_size=(224, 224),
+  batch_size=3000
+  )
+)
+xtrain.shape, ytrain.shape
+```
+
+```{python}
+xtest, ytest = next(
+  train_data.flow_from_directory(
+  path + "validation/",
+  target_size=(224, 224),
+  batch_size=1000
+  )
+)
+xtest.shape, ytest.shape
+```
+
+## Feature extraction
+Feature extraction con ResNet50 pretrainato.
+Vogliamo il nostro task, per cui eliminiamo i layers densi.
+
+```{python}
+base_model = ResNet50(
+  weights="imagenet",
+  include_top=False # modello senza i layer densi
+)
+```
+
+```{python}
+batch_predict = base_model.predict(xbatch)
+batch_predict.shape
+```
+(7, 7) dipendono dal pooling e dalle convoluzioni.
+2048 sono i filtri.
+Noi vogliamo una feature matrix: per ogni datapoin, vogliamo un vettore, non un tensore. Bisogna ridurre la dimensionalità.
+
+Noi vogliamo partire dal base_model e aggiungere layers.
+
+```{python}
+x = base_model.output
+compact = Flatten()(x)
+extractor = Model(inputs=base_model.input, outputs=compact)
+
+batch_predict = extractor.predict(xbatch)
+batch_predict.shape
+```
+Ora abbiamo una feature matrix, con ```{python}7*7*2048 ``` features.
+
+Il layer che fa questa cosa e alternativo al Flatten è il GlobalAveragePooling2D. Alla fine della parte di convoluzione di solito è sempre presente nei modelli pretrainati.
+
+```{python}
+x = base_model.output
+compact = GlobalAveragePooling2D()(x)
+extractor = Model(inputs=base_model.input, outputs=compact)
+
+batch_predict = extractor.predict(xbatch)
+batch_predict.shape
+```
+
+Con il GlobalAveragePooling2D estraiamo l'ultima dimensione, che è la dimensione dei filtri. Questo è un modo per ridurre la dimensionalità.
+Lavoriamo sempre su un batch di 32 immagini, ma con 2048 features per immagine.
+
+```{python}
+x = base_model.output
+compact = GlobalAveragePooling2D()(x)
+extractor = Model(inputs=base_model.input, outputs=compact)
+
+feat_train = extractor.predict(xtrain)
+feat_train.shape
+```
+
+```{python}
+x = base_model.output
+compact = GlobalAveragePooling2D()(x)
+extractor = Model(inputs=base_model.input, outputs=compact)
+
+feat_test = extractor.predict(xtest)
+feat_test.shape
+```
+
+Ora bisogna fare il training vero e proprio della Logistic Regression.
+
+```{python}
+ytrain.shape
+```
+siccome ogni immagine è o food o non food, abbiamo due classi. La ytrain è un array di 3000x2. Noi prendiamo l'argmax, ossia 1.
+
+```{python}
+ytrain = np.argmax(ytrain, axis=1)
+ytest = np.argmax(ytest, axis=1)
+```
+
+
+```{python}
+from sklearn.linear_model import LogisticRegression
+
+logreg = LogisticRegression()
+logreg.fit(feat_train, ytrain)
+```
+
+```{python}
+print(f"train accuracy: {logreg.score(feat_train, ytrain)}")
+print(f"test accuracy: {logreg.score(feat_test, ytest)}")
+```
+
+Le feature estratte dal modello preaddestrato sono molto buone.
+Siccome queste cose diventano dei prototipi, facciamo la parte di visualizzazoine dei risultati.
+
+```{python}
+def load_and_predict(path):
+  
+  raw_img = load_img(path, target_size=(224, 224))
+  np_img = np.expand_dims(img_to_array(raw_img), 0)
+  preproc = resnet50.preprocess_input(np_img)
+  feats = extractor.predict(preproc)
+  classif = logreg.predict(feats)
+  return ["FOOD", "NO FOOD"][classif]
+```
+
+
+
+
+

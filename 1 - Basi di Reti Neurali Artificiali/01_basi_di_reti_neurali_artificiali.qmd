@@ -1,0 +1,809 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+library("reticulate")
+use_virtualenv("myenv")
+```
+
+# Setup
+
+Code snippet per limitare i warning il più possibile.
+
+```{python}
+import warnings
+warnings.filterwarnings('ignore')
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
+import numpy as np
+import matplotlib.pyplot as plt
+from tensorflow.keras import Sequential, Model
+from tensorflow.keras.layers import InputLayer, Dense, Input
+from tensorflow.keras.backend import clear_session
+
+from sklearn.datasets import load_iris
+from sklearn.model_selection import train_test_split
+```
+
+# Import
+
+## Creiamo una rete feed-forward fully connected
+
+```{python}
+seq_model = tf.keras.Sequential()
+input_layer = tf.keras.layers.InputLayer(input_shape=(100,))
+hidden_layer_one = tf.keras.layers.Dense(128, activation='relu')
+hidden_layer_two = tf.keras.layers.Dense(32, activation='relu')
+output_layer = tf.keras.layers.Dense(units=19, activation="softmax")
+```
+
+La **relu** introduce una non linearità e di prassi è usata come funzione di attivazione per i layer nascosti, mentre per il layer di output usiamo una funzione in base al risultato al task che stiamo eseguendo. In questo caso la **softmax** è la scelta migliore per un task di *classificazione multiclasse*. Ora devo aggiunger ei layers al modello, che è nella variabile seq_model. I layers devono essere passati in ordine.
+
+```{python}
+seq_model.add(input_layer)
+seq_model.add(hidden_layer_one)
+seq_model.add(hidden_layer_two)
+seq_model.add(output_layer)
+```
+
+```{python}
+def get_seq_model():
+  
+  # vedi dopo
+  clear_session()
+  
+  seq_model = Sequential()
+  input_layer = InputLayer(input_shape=(100,))
+  hidden_layer_one = Dense(128, activation='relu')
+  hidden_layer_two = Dense(32, activation='relu')
+  output_layer = Dense(units=10, activation="softmax")
+  seq_model.add(input_layer)
+  seq_model.add(hidden_layer_one)
+  seq_model.add(hidden_layer_two)
+  seq_model.add(output_layer)
+  
+  return seq_model
+```
+
+```{python}
+seq_model = get_seq_model()
+```
+
+## Esploriamo i parametri della rete
+
+*summary()* descrive il modello. Il dimensionamento ci da informazioni sul numero di parametri che la rete deve imparare. Questo è importante per capire quanto sia complessa la rete e quanto sia difficile addestrarla. Inoltre, ci consente di sapere se la rete è costruita come volevamo.
+
+```{python}
+seq_model.summary()
+```
+
+Il None come valore x è presente perché la rete può lavorare in **batch mode**. Se stiamo classificando un'immagine che può appartenere a 10 classi, l'immagine entra con y features ed esce con distribuzione di probabilità su 10 immagini. Il None dunque indica che la prima dimensione della tupla dipende dai *data points* che stiamo passando. La seconda dimensione sono il *numero di neuroni* per ogni layer. *Param* sono i pesi e i bias che la rete deve imparare. Questi sono i parametri che la rete deve imparare per fare predizioni. 330 sono 32 parametri \* 10 neuroni + 10 bias. **use_bias = False** consente di eliminare i bias dai layer. Questo è utile quando si vuole ridurre il numero di parametri da imparare.
+
+Keras alloca la memoria. È buona prassi usare *clear_session()*, che inseriamo nella funzione.
+
+I parametri sono predeterminati, gli iperparametri sono oggetto di fine tuning.
+
+## Forward Propagation
+
+Per ora ci interessa la sintassi per addestrare la rete. Gli output non hanno rilevanza.
+
+Creo un input random
+
+```{python}
+x = np.random.rand(1, 100)
+x.shape # check shape fa sempre bene!
+```
+
+creo il modello
+
+```{python}
+y = seq_model.predict(x)
+y.shape
+```
+
+Ho una matrice con un datapoint e 100 features. L'output ha 1 datapoint e una distribuzione su 10 classi. 100 sono i neuroni di input, 10 di output. Noi sappiamo che ci sono 2 hidden layers.
+
+Siccome la rete funziona in batch, posso variare la x come voglio.
+
+```{python}
+x = np.random.rand(5, 100)
+y = seq_model.predict(x)
+y.shape
+```
+
+La stessa cosa non è possibile per la y, siccome il layer di input deve avere 100 neuroni.
+
+```{python}
+x = np.random.rand(1, 100)
+y = seq_model.predict(x)
+y
+
+x = np.random.rand(5, 100)
+y = seq_model.predict(x)
+y
+
+```
+
+Siccome la rete neurale è un oggetto deterministico, è normale che applicandola più volte allo stesso input si ottengano gli stessi output.
+
+Diverso invece se creo un modello e lo inizializzo. Il modello ha creazione randomica.
+
+```{python}
+seq_model = get_seq_model()
+x = np.random.rand(1, 100)
+y = seq_model.predict(x)
+y
+
+seq_model = get_seq_model()
+x = np.random.rand(1, 100)
+y = seq_model.predict(x)
+y
+```
+
+## Le funzioni di attivazione
+
+```{python}
+seq_model = get_seq_model()
+x = np.random.rand(5, 100)
+y = seq_model.predict(x)
+
+np.round(y, 2) # arrotonda a 2 decimali 
+```
+
+Non ho valori negativi e nemmeno particolarmente grandi. Questo dipende dalla funzione di attivazione *softmax*.
+
+#### NB
+
+Gli indici di np.sum() sono importanti. Se voglio sommare per righe o per colonne, devo specificare l'indice corretto. (0, 1) o (row, column).
+
+```{python}
+np.sum(y, axis=0) # by row
+np.sum(y, axis=1) # by columns
+```
+
+Ricorda che ci sono errori di arrotondamento, per cui non torna per co
+
+```{python}
+def get_seq_model_activation(my_activation):
+  
+  # vedi dopo
+  clear_session()
+  
+  seq_model = Sequential()
+  input_layer = InputLayer(input_shape=(100,))
+  hidden_layer_one = Dense(128, activation='relu')
+  hidden_layer_two = Dense(32, activation='relu')
+  output_layer = Dense(units=10, activation=my_activation)
+  seq_model.add(input_layer)
+  seq_model.add(hidden_layer_one)
+  seq_model.add(hidden_layer_two)
+  seq_model.add(output_layer)
+  
+  return seq_model
+```
+
+### Softmax
+
+```{python}
+seq_model = get_seq_model_activation('softmax')
+
+x = np.random.rand(3, 100)
+y = seq_model.predict(x)
+```
+
+Con la softmax ottengo valori tra 0 e 1
+
+```{python}
+np.round(y, 2)
+```
+
+e row che sommano ad 1.
+
+```{python}
+np.round(np.sum(y, 1), 2)
+```
+
+### Sigmoid
+
+```{python}
+seq_model = get_seq_model_activation('sigmoid')
+
+x = np.random.rand(3, 100)
+y = seq_model.predict(x)
+```
+
+I valori sono tra 0 e 1.
+
+```{python}
+np.round(y, 2)
+```
+
+Ma la somma non è 1.
+
+```{python}
+np.round(np.sum(y, 1), 2)
+```
+
+### Tanh
+
+```{python}
+seq_model = get_seq_model_activation('tanh')
+
+x = np.random.rand(3, 100)
+y = seq_model.predict(x)
+```
+
+Abbiamo valori negativi.
+
+```{python}
+np.round(y, 2)
+```
+
+E che non sommano a 1.
+
+```{python}
+np.round(np.sum(y, 1), 2)
+```
+
+### Linear
+
+```{python}
+seq_model = get_seq_model_activation('linear')
+x = np.random.rand(3, 100)
+y = seq_model.predict(x)
+
+np.round(y, 2)
+np.round(np.sum(y, 1), 2)
+```
+
+I valori di y possono essere negativi e non sommano a 1. Non ho più asintoti orizzontali.
+
+### ReLU
+
+```{python}
+seq_model = get_seq_model_activation('relu')
+x = np.random.rand(3, 100)
+y = seq_model.predict(x)
+
+np.round(y, 2)
+np.round(np.sum(y, 1), 2)
+```
+
+Con la ReLU i valori negativi vengono appiattiti a 0. I valori positivi sono infiniti.
+
+### Custom
+
+Le stringhe delle funzioni di attivazione sono parte di un dict. Posso creare una *funzione custom* e passarla come argomento.
+
+```{python}
+def f(x):
+  return x*1000
+```
+
+```{python}
+seq_model = get_seq_model_activation(f)
+
+x = np.random.rand(3, 100)
+y = seq_model.predict(x)
+
+np.round(y, 3)
+np.round(np.sum(y, axis=1), 4)
+```
+
+I neuroni di output fanno la somma pesata di input + pesi + bias. Sul risultato di questa somma pesata viene applicata la funzione di attivazione, che moltiplica per 1000.
+
+## Iris dataset
+
+### Esplorazione dataset
+
+```{python}
+from sklearn.datasets import load_iris
+```
+
+```{python}
+data = load_iris()
+```
+
+```{python}
+data.keys()
+```
+
+```{python}
+print(data["DESCR"])
+```
+
+```{python}
+data["data"].shape
+```
+
+Abbiamo 150 datapoint, ognuno descritto da 4 dimensioni.
+
+```{python}
+data["target"].shape
+```
+
+Abbiamo 150 target, uno per ogni datapoint. Sospiro di sollievo, siccome nella realtà non è mai così.
+
+```{python}
+set(data["target"]), np.unique(data["target"], return_counts=True)
+```
+
+Abbiamo 3 classi, con 50 elementi ciascuna. Sebbene questa sia la situazione ottimale per la DS, nella realtà non abbiamo facilmente questi dati, anche solo per il tipo di fenomeno osservato. Ad esempio, nelle transazioni bancarie, le frodi sono molto rare rispetto le operazioni regolari.
+
+### Rete Neurale
+
+```{python}
+def get_iris_net():
+  clear_session()
+  model = Sequential()
+  # 4 features in input, la virgola perché è una tupla per accomodare un numero variabile di data point
+  model.add(InputLayer(input_shape=(4,)))
+  # hidden layers
+  model.add(Dense(32, activation="relu"))
+  model.add(Dense(32, activation="relu"))
+  # output layer multiclasse. Le classi sono le 3 specie di iris
+  model.add(Dense(3, activation="softmax"))
+  
+  return model
+```
+
+Testiamo la rete senza training. Il risultato sono le probabilità che un datapoint appartenga a ciascuna delle 3 classi. Abbiamo una matrice (150,3).
+
+```{python}
+x = data.data
+y = data.target
+model = get_iris_net()
+predictions = model.predict(x)
+predictions
+```
+
+```{python}
+predictions.shape
+```
+
+Noi vogliamo sapere quale sia la classe con probabilità maggiore.
+
+```{python}
+# su un vettore, dammi indice del valore massimo
+# noi lo vogliamo per righe
+np.argmax(predictions, axis=1)
+```
+
+Facciamo un check
+
+```{python}
+np.argmax(predictions, axis=1)[-2:]
+predictions[-2:]
+```
+
+E per l'accuracy? Basta fare check di quante classi siano predette correttamente rispetto al target.
+
+```{python}
+sum(np.argmax(predictions, axis=1) == y) / len(y)
+```
+
+La soglia minima di un modello è la random guess, che per un problema multiclasse è 1/numero di classi. Nel nostro caso, 0.33.
+
+### Training
+
+```{python}
+x = data.data
+y = data.target
+xtrain, xtest, ytrain, ytest = train_test_split(x, y, test_size=0.33)
+```
+
+```{python}
+xtrain.shape, xtest.shape
+```
+
+```{python}
+np.unique(ytrain, return_counts=True), np.unique(ytest, return_counts=True)
+```
+
+Qui vediamo lo split dei dati. Abbiamo 33% di ogni classe in test e 67% in train.
+
+```{python}
+
+model = get_iris_net()
+```
+
+```{python}
+predictions = model.predict(x)
+sum(np.argmax(predictions, axis=1) == y) / len(y)
+```
+
+Prima bisogna fare il compile del modello prima di fare il training. Il **compile** determine come minimizzare la loss.
+
+```{python}
+model.compile(
+  optimizer="adam",
+  loss="sparse_categorical_crossentropy", # siccome abbiamo target interi
+  metrics=["accuracy"]
+  )
+```
+
+Valutiamo il modello prima del training.
+
+```{python}
+model.evaluate(x, y)
+```
+
+Evaluate ritorna una loss e una accuracy, uguale a quella precedentemente calcolata.
+
+Con il fit viene creata una history, che contiene la loss e la accuracy per ogni epoca. Questo ci serve per i plot.
+
+```{python}
+hist = model.fit(x, y, epochs=5)
+```
+
+## MNIST Dataset
+
+Dataset famoso e didattico, ma con una difficoltà in più che vedremo nelle reti convoluzionali.
+
+```{python}
+(xtrain, ytrain), (xtest, ytest) = tf.keras.datasets.mnist.load_data()
+```
+
+```{python}
+type(xtrain), xtrain.shape, xtest.shape
+```
+
+Il dataset è più grande e giù splittato in train e test. Abbiamo 60k immagini di 28x28 pixel per il train e 10k per il test.
+
+```{python}
+xtrain[0]
+plt.matshow(xtrain[0], cmap="Blues");
+plt.show()
+```
+
+```{python}
+ytrain.shape, ytest.shape
+```
+
+Train e test target hanno la stessa dimensione, per cui abbiamo un sacco di problemi in meno, perché non dobbiamo fare il check di avere le stesse classi in train e test.
+
+Abbiamo un task di **classificazione multiclasse** di cifre scritte a mano.
+
+```{python}
+set(ytrain)
+```
+
+### Preprocessing
+
+Il primo problema è il **dimensionamento**. Negli LMP i neuroni di input sono lineari. In questo caso abbiamo un'immagine, che è una matrice. Dobbiamo trasformare la matrice in un vettore. Ci sono diversi modi per affrontare questa cosa. Questo task di classificazione è molto semplice, quindi può essere affrontatoin un modo brutale con un *reshape* del dataset. La matrice viene resa un unico vettore di valori. È un'operazione brutale, ma molte operazioni sono brutali in ML.
+
+```{python}
+img_ex = xtrain[200]
+plt.imshow(img_ex, cmap="Blues");
+plt.show()
+```
+
+Abbiamo una matrice 28x28.
+
+```{python}
+img_ex.shape
+```
+
+Possiamo vettorizzarla creando un vettore 28\*28.
+
+```{python}
+img_flat = np.reshape(img_ex, (28*28))
+img_flat.shape
+```
+
+E torniamo alla matrice con un reshape.
+
+```{python}
+img_recover = np.reshape(img_flat, (28, 28))
+img_recover.shape
+```
+
+Applichiamo a tutto il dataset.
+
+```{python}
+xtrain_flat = np.reshape(xtrain, (60000, 28*28))
+xtest_flat = np.reshape(xtest, (10000, 28*28))
+```
+
+Ora abbiamo una feature matrix 60000 x 784 che possiamo usare in un MLP.
+
+```{python}
+xtrain_flat.shape
+np.max(xtrain)
+```
+
+Ora **normalizziamo** i dati per migliorare il training.
+
+```{python}
+xtrain_flat = xtrain_flat.astype("float32") / 255
+xtest_flat = xtest_flat.astype("float32") / 255
+
+np.max(xtrain_flat)
+```
+
+Possiamo visualizzare l'immagine tramite il reshape. Non abbiamo annullato la normalizzazione. Maatplotlib riscala i valori.
+
+```{python}
+plt.matshow(np.reshape(xtrain_flat[10000], (28,28)), cmap="Blues")
+plt.show()
+```
+
+La nostra variabile target sono i numeri 0-9, per cui non dobbiamo normalizzare.
+
+```{python}
+set(ytrain)
+```
+
+### Modello Sequenziale
+
+Le API funzionali sono più potenti delle sequenziali, siccome consentono un modello di personalizzazione maggiore. La sintassi è simile, per cui si puà partire da un sequenziale e trasformarlo in funzionale.
+
+```{python}
+def get_seq_model():
+  clear_session()
+  seq_model = Sequential()
+  input_layer = InputLayer(input_Shape=(100,))
+  hidden_layer_one = Dense(128, activation="relu")
+  hidden_layer_two = Dense(32, activation="relu")
+  output_layer = Dense(10, activation="softmax")
+  seq_model.add(input_layer)
+  seq_model.add(hidden_layer_one)
+  seq_model.add(hidden_layer_two)
+  seq_model.add(output_layer)
+  
+  return seq_model
+
+seq_model = get_seq_model()
+seq_model.summary()
+```
+
+### Modello Funzionale
+
+L'idea qui è di **applicazione successiva**. Si parte con un input layer. Ricreiamo il modello sequenziale con l'API funzionale.
+La cosa importante è che ogni layer è una funzione che applico grazie alle **()** al layer successivo.
+Ogni layer è argomento della funzione rappresentata dal layer successivo.
+
+```{python}
+clear_session()
+input_layer = Input(shape=(100,))
+hidden_layer_one = Dense(128, activation="relu")(input_layer)
+hidden_layer_two = Dense(32, activation="relu")(hidden_layer_one)
+output_layer = Dense(10, activation="softmax")(hidden_layer_two)
+```
+
+Ora creiamo il modello.
+
+```{python}
+func_model = Model(
+  inputs=input_layer,
+  outputs=output_layer
+  )
+func_model.summary()
+```
+
+E ora creiamo una funzione.
+```{python}
+def get_func_model():
+  clear_session()
+  input_layer = Input(shape=(100,))
+  hidden_layer_one = Dense(128, activation="relu")(input_layer)
+  hidden_layer_two = Dense(32, activation="relu")(hidden_layer_one)
+  output_layer = Dense(10, activation="softmax")(hidden_layer_two)
+  func_model = Model(
+    inputs=input_layer,
+    outputs=output_layer
+    )
+  return func_model
+```
+
+Perché avere 2 sintassi diverse?
+- L'architettura fork and join è disponibile solo nel functional model.
+- È uno strumento in più.
+- Esistono diversi paradigmi di programmazione. Imperativo, quello della macchina di Turing; funzionale, dal lambda calcolo. La computazione è vista come applicazione di funzioni.
+- Il layer è visto come una funzione e il modello come una concatenazione di funzioni.
+
+### Analisi misclassificazione IRIS dataset
+
+```{python}
+import numpy as np
+import tensorflow as tf
+import matplotlib.pyplot as plt
+from sklearn.datasets import load_iris
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import InputLayer, Dense
+from tensorflow.keras.datasets.mnist import load_data as mnist_load
+from tensorflow.keras.backend import clear_session
+```
+
+```{python}
+iris = load_iris()
+xtrain, xtest, ytrain, ytest = train_test_split(iris.data, iris.target, test_size=0.2)
+```
+
+```{python}
+def get_iris_net():
+  clear_session()
+  model = Sequential()
+  model.add(InputLayer(input_shape=(4,)))
+  model.add(Dense(32, activation="relu"))
+  model.add(Dense(32, activation="relu"))
+  model.add(Dense(3, activation="softmax"))
+  return model
+```
+
+```{python}
+model = get_iris_net()
+model.compile(
+  loss="sparse_categorical_crossentropy",
+  optimizer="adam",
+  metrics=["accuracy"]
+  )
+```
+
+```{python}
+iris_prediction_before = model.predict(xtest)
+iris_prediction_before.shape
+```
+
+Cerco il valore massimo per riga:
+```{python}
+iris_indexes_before = np.argmax(iris_prediction_before, axis=1)
+```
+
+```{python}
+confusion_matrix(
+  ytest, # vere etichette
+  iris_indexes_before, # etichette predette
+)
+```
+
+La **matrice di confusione** è molto utile in qualsiasi classificazione.
+Le righe sono le **label vere** e le colonne le **label predette**.
+
+La controprova:
+```{python}
+np.unique(ytest, return_counts=True)
+```
+
+La nostra rete neurale non è stata trainata e prevede tutto solo in una classe.
+La soluzione ideale sarebbe avere tutto sulla diagonale.
+
+```{python}
+model.evaluate(xtest, ytest)
+```
+
+L'accuracy è del 0.43, ossia il numero di predizioni corrette per la classe 0 (13) diviso il totale (30).
+```{python}
+13/30
+```
+
+
+```{python}
+model.fit(xtrain, ytrain, verbose=0, epochs=10)
+model.evaluate(xtest, ytest)
+```
+
+```{python}
+iris_prediction_after = model.predict(xtest)
+iris_indexes_after = np.argmax(iris_prediction_after, axis=1)
+confusion_matrix(ytest, iris_indexes_after)
+```
+
+```{python}
+print("true", np.unique(ytest, return_counts=True))
+print("pred", np.unique(iris_indexes_after, return_counts=True))
+```
+
+La matrice di confusione ci dice non solo la classe, ma anche con che % ho indovinato la classe.
+
+### Analisi misclassificazione MNIST dataset
+
+```{python}
+(xtrain, ytrain), (xtest, ytest) = mnist_load()
+num_datapoints_train = xtrain.shape[0]
+num_datapoints_test = xtest.shape[0]
+xtrain = np.reshape(xtrain, [num_datapoints_train, -1])
+xtest = np.reshape(xtest, [num_datapoints_test, -1])
+xtrain = xtrain.astype("float32") / 255
+xtest = xtest.astype("float32") / 255
+```
+
+```{python}
+def get_mnist_mlp():
+  clear_session()
+  model = Sequential()
+  model.add(InputLayer(input_shape=(784,)))
+  model.add(Dense(1000, activation="relu"))
+  model.add(Dense(1000, activation="relu"))
+  model.add(Dense(10, activation="softmax"))
+  return model
+```
+
+```{python}
+model = get_mnist_mlp()
+model.compile(
+  loss="sparse_categorical_crossentropy",
+  metrics=["accuracy"]
+)
+```
+
+```{python}
+model.fit(xtrain, ytrain, verbose=0, epochs=1)
+model.evaluate(xtest, ytest)
+```
+
+```{python}
+raw = model.predict(xtest) # per avere le predizioni
+raw.shape
+```
+
+raw è un array di 10 colonne, una per ogni classe, e 10000 righe, una per ogni immagine.
+
+```{python}
+raw[0]
+```
+
+A noi interessano le predictions.
+
+```{python}
+prediction = np.argmax(model.predict(xtest), axis=1)
+```
+
+```{python}
+confusion_matrix(ytest, prediction)
+```
+
+Questa è una matrice 10x10. Abbiamo molto segnale sulla diagonale, siccome l'accuaracy è alta.
+
+```{python}
+cm = confusion_matrix(ytest, prediction)
+cm[range(10), range(10)] = 0 # assegno scalare a vettore grazie al broadcasting
+cm
+```
+
+Così facendo ho rimosso gli elementi classificati correttamente e mi focalizzo sugli errori.
+
+```{python}
+np.sum(cm)
+```
+
+Double check dell'accuracy:
+```{python}
+(10000 - np.sum(cm)) / 10000
+```
+
+Andiamo a vedere *quali* errori ha fatto la rete.
+```{python}
+misclassified = [i for i in range(10000) if ytest[i] != prediction[i]]
+len(misclassified) # mi aspetto stessa lunghezza degli errori
+```
+
+```{python}
+selected_errors = np.random.choice(misclassified, 4)
+selected_errors
+```
+
+```{python}
+plt.figure(figsize=(12,4))
+for i, e in enumerate(selected_errors):
+  # e è l'indice dell'immagine
+  plt.subplot(1, 4, i+1) # subplot vuole 1,2,3,4
+  img = np.reshape(xtest[e], (28,28))
+  plt.imshow(img, cmap="Blues")
+  plt.title("IS " + str(ytest[e]) + ", NET SAID " + str(prediction[e]))
+
+plt.show()
+```
+
+# Conclusione
+Abbiamo creato modelli e li abbiamo applicati al dataset.
+La parte del training è ancora tutta da esplorare!
+
+

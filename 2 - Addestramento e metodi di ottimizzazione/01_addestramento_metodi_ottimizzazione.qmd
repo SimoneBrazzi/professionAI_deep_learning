@@ -1,0 +1,777 @@
+---
+title: "Addestramento e metodi di ottimizzazione"
+author: "Simone Brazzi"
+#jupyter: python3
+format:
+  html:
+    theme:
+      dark: "darkly"
+      light: "flatly"
+execute: 
+  warning: false
+self_contained: true
+toc: true
+toc-depth: 2
+number-sections: true
+---
+
+```{python}
+#import warnings
+#warnings.filterwarnings["ignore"]
+import os
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
+import tensorflow as tf
+import numpy as np
+from sklearn import datasets
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.backend import clear_session
+import matplotlib.pyplot as plt
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import InputLayer, Dense
+```
+
+# Learning curve
+
+```{python}
+bc = datasets.load_breast_cancer()
+x = bc.data
+y = bc.target
+```
+
+```{python}
+x.shape, y.shape
+```
+
+feature_matrix (569, 30)
+
+```{python}
+np.unique(y, return_counts=True)
+```
+
+```{python}
+xtrain, xtest, ytrain, ytest = train_test_split(
+  x, y, 
+  test_size=0.25, 
+  stratify=y,
+  random_state=42)
+```
+
+stratify serve per mantenere il bilanciamento tra le classi, soprattutto perché stiamo lavorando con un dataset piccolo.
+
+```{python}
+def plot_learning_curves(hist,exp_name):
+    plt.figure(figsize=(10,4))
+    for subplot,curve in enumerate(['loss','accuracy']):
+        plt.subplot(1,2,subplot+1)
+        plt.plot(hist.history[curve],label='training')
+        plt.plot(hist.history['val_'+curve],label='validation')
+        plt.legend()
+        #plt.title(exp_name+':'+curve)
+        plt.title(f"{exp_name}: {curve}")
+    plt.tight_layout();
+```
+
+```{python}
+def get_model():
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=30, activation="relu", input_dim=30))
+  model.add(Dense(units=30, activation="relu"))
+  model.add(Dense(units=30, activation="relu"))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(loss="binary_crossentropy", metrics=["accuracy"])
+  return model
+```
+
+```{python}
+model = get_model()
+model.summary()
+```
+
+Il modello deve calcolare 2821 derivate parziali.
+Ora eseguiamo il fit del modello su 5 epoche.
+
+```{python}
+# cell o line magic. Misura il tempo di esecuzione della cella
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=5,
+  validation_data=(xtest, ytest), # non necessario per il training, ma per monitorare la performance
+  verbose=0
+  )
+```
+
+La modifica degli iperparametri cambia i tempi di esecuzione.
+
+```{python}
+plot_learning_curves(history, "first_experiment")
+plt.show()
+```
+
+Questo è un punto di partenza per capire come il modello si comporta. Abbiamo un modello, ora dobbiamo ottimizzare il modello. Per ora sta imparando, ma maleeeeeh!
+
+# Giochiamo con le epoche
+
+Andiamo a caccia di **iperparametri**. Gli iperparametri sono i parametri che non vengono appresi dal modello, ma che vengono impostati dall'utente. Ad esempio, il numero di epoche, il learning rate, il numero di neuroni, ecc.
+
+```{python}
+model = get_model()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=20,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "more_epochs")
+plt.show()
+```
+
+La parte di definizione del modello avviene prima, ma in fase di training capisco se sia ben inizializzato.
+Rimuoviamo un hidden layer.
+
+```{python}
+def get_model():
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=30, activation="relu", input_dim=30))
+  model.add(Dense(units=30, activation="relu"))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(loss="binary_crossentropy", metrics=["accuracy"])
+  return model
+
+model = get_model()
+model.summary()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=20,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "more_epochs")
+plt.show()
+```
+
+Abbiamo rimosso 930 parametri. Ho sempre oscillazioni brutte, ma non sembra essere peggiorato. Rimuoviamone un altro.
+
+```{python}
+def get_model():
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=16, activation="relu", input_dim=30))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(loss="binary_crossentropy", metrics=["accuracy"])
+  return model
+
+model = get_model()
+model.summary()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=50,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "more_epochs")
+plt.show()
+
+```
+
+La loss scende e l'accuracy non è brutta. Rimuovendo 2/3 dei parametri, abbiamo sottodimensionato il modello senza peggiorare la performance.
+
+La rete sta apprendendo: successivamente si lima il tutto.
+
+# Inizializzazione pesi
+
+```{python}
+def get_model():
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=16, activation="relu", input_dim=30))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(loss="binary_crossentropy", metrics=["accuracy"])
+  return model
+
+model = get_model()
+model.summary()
+```
+
+```{python}
+model.layers[0].get_weights()
+```
+Questa è la matrice dei pesi w e b
+
+```{python}
+model.layers[0].get_weights()[0].shape, model.layers[0].get_weights()[1].shape
+```
+30 pesi, 16 bias nel primo layer.
+
+```{python}
+model.layers[1].get_weights()[0].shape, model.layers[1].get_weights()[1].shape
+```
+16 pesi e 1 bias nel secondo layer.
+
+Questi pesi vengono fuori dal metodo *kernel_initializer*. Posso inizializzare i pesi tutti a 0.
+```{python}
+def get_model():
+  clear_session()
+  model = Sequential()
+  model.add(Dense(
+    units=16, 
+    activation="relu", 
+    input_dim=30,
+    kernel_initializer=tf.keras.initializers.Zeros()
+    ))
+  model.add(Dense(
+    units=1, 
+    activation="sigmoid",
+    kernel_initializer=tf.keras.initializers.Zeros()
+    ))
+  model.compile(loss="binary_crossentropy", metrics=["accuracy"])
+  return model
+
+model = get_model()
+model.summary()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=50,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "more_epochs")
+plt.show()
+```
+Il modello inizializzato con i pesi a 0 non riesce ad apprendere. La curva è piatta. Non è a 0.5 siccome il dataset non è bilanciato. La loss scende.
+Per fare del male alla rete, posso anche settare i bias a False e non usarli.
+
+```{python}
+def get_model():
+  clear_session()
+  model = Sequential()
+  model.add(Dense(
+    units=16, 
+    activation="relu", 
+    input_dim=30,
+    kernel_initializer=tf.keras.initializers.Zeros(),
+    use_bias=False
+    ))
+  model.add(Dense(
+    units=1, 
+    activation="sigmoid",
+    kernel_initializer=tf.keras.initializers.Zeros(),
+    use_bias=False
+    ))
+  model.compile(loss="binary_crossentropy", metrics=["accuracy"])
+  return model
+
+model = get_model()
+model.summary()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=50,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "more_epochs")
+plt.show()
+```
+
+Così facendo impedisco alla rete di imparare qualsiasi cosa: la rete non si muove e le rette sono piatte.
+Inizializzare i pesi in modo randomico è ciò che consente al modello di imparare. Se parto da 0, il modello non può imparare.
+
+Posso inizializzare i pesi con diverse **distribuzioni**.
+
+```{python}
+def get_model():
+  kernel_init = tf.keras.initializers.RandomUniform()
+  clear_session()
+  model = Sequential()
+  model.add(Dense(
+    units=16, 
+    activation="relu", 
+    input_dim=30,
+    kernel_initializer=kernel_init,
+    use_bias=False
+    ))
+  model.add(Dense(
+    units=1, 
+    activation="sigmoid",
+    kernel_initializer=kernel_init,
+    use_bias=False
+    ))
+  model.compile(loss="binary_crossentropy", metrics=["accuracy"])
+  return model
+
+model = get_model()
+model.summary()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=50,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "more_epochs")
+plt.show()
+```
+
+Nel 99% dei casi non serve specificare il kernel. La Glorot Uniform è quella di default ed è pià che sufficiente. Questa distribuzione nasce con l'intento di ridurre l'**exploding gradient** (segnale propagato all'indietro).
+
+```{python}
+def get_model():
+  kernel_init = tf.keras.initializers.RandomNormal(mean=2)
+  clear_session()
+  model = Sequential()
+  model.add(Dense(
+    units=16, 
+    activation="relu", 
+    input_dim=30,
+    kernel_initializer=kernel_init
+    ))
+  model.add(Dense(
+    units=1, 
+    activation="sigmoid",
+    kernel_initializer=kernel_init
+    ))
+  model.compile(loss="binary_crossentropy", metrics=["accuracy"])
+  return model
+
+model = get_model()
+model.summary()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=50,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "more_epochs")
+plt.show()
+```
+
+Anche in questo caso sto facendo danni. Con una media di 2 sono in un regime in cui il modello non apprende. Verosimilmente, è un problema di exploding gradient e saturazione della sigmoide in fondo.
+Gli inizializer tendono a creare più danno che soluzione, almeno in una fase iniziale.
+
+# Batch size
+
+Il **batch size** dipende dal fit. Ha valore di default 32.
+```{python}
+def get_model():
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=16, activation="relu", input_dim=30))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(loss="binary_crossentropy", metrics=["accuracy"])
+  return model
+
+model = get_model()
+model.summary()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=50,
+  batch_size=32,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "batch_32")
+plt.show()
+```
+
+
+```{python}
+model = get_model()
+model.summary()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=50,
+  batch_size=1,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "batch_1")
+plt.show()
+```
+
+```{python}
+model = get_model()
+model.summary()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=50,
+  batch_size=1000,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "batch_1000")
+plt.show()
+```
+
+
+Con batch_1 mi calcolo le derivate, modifico la rete e proseguo. Non sto facendo batch o blocchi sui dati, ma sto lavorando su ogni singolo dato.
+Con batch_1000 la prestazione peggiora, siccome ad ogni epoca do tutti i data point, calcolo le derivate e faccio weigth update. Tempo computazionale / bontà risultato sono da bilanciare. Il batch size di default è sempre la base da usare.
+
+Anche con il batch size, in linea di massima, conviene usare il valore di default. Eccezione sono datapoint molto grossi o la memoria piccola dell'hardware (magari in un Raspberry).
+
+# Optimizers
+
+Iperparametro fondamentale è il **learning rate**, ossia l'avanzamento ad ogni derivata parziale. Di solito tramite l'optimizer è possibile agire indirettamente sul learning rate.
+
+```{python}
+def get_model():
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=16, activation="relu", input_dim=30))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(loss="binary_crossentropy", metrics=["accuracy"])
+  return model
+
+model = get_model()
+model.summary()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=50,
+  batch_size=32,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "optimizer_base")
+plt.show()
+```
+
+Il valore di default è *RMSprop*. Il più avanzato è Adam o ADAptive Moment.
+
+Come per le metriche, funzioni di attivazione e loss, posso lavorare con le stirnghe standard. Posso anche inizializzare l'oggetto non con una stringa, ma una funzione.
+
+```{python}
+def get_model(some_opt):
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=16, activation="relu", input_dim=30))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(
+    optimizer=some_opt,
+    loss="binary_crossentropy",
+    metrics=["accuracy"])
+  return model
+
+my_optimizer = tf.keras.optimizers.RMSprop(
+  learning_rate = 0.001
+)
+model = get_model(my_optimizer)
+model.summary()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=50,
+  batch_size=32,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "optimizer_base")
+plt.show()
+```
+
+```{python}
+def get_model(some_opt):
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=16, activation="relu", input_dim=30))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(
+    optimizer=some_opt,
+    loss="binary_crossentropy",
+    metrics=["accuracy"])
+  return model
+
+my_optimizer = tf.keras.optimizers.SGD(
+  learning_rate = 0.01
+)
+model = get_model(my_optimizer)
+model.summary()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=50,
+  batch_size=32,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "optimizer_sgd")
+plt.show()
+
+```
+
+```{python}
+def get_model(some_opt):
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=16, activation="relu", input_dim=30))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(
+    optimizer=some_opt,
+    loss="binary_crossentropy",
+    metrics=["accuracy"])
+  return model
+
+my_optimizer = tf.keras.optimizers.Adam(
+  learning_rate = 0.001
+)
+model = get_model(my_optimizer)
+model.summary()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=50,
+  batch_size=32,
+  validation_data=(xtest, ytest),
+  verbose=0
+  )
+plot_learning_curves(history, "optimizer_adam")
+plt.show()
+
+```
+
+Con dataset semplici si possono fare modifiche, altrimenti bisogna sapere dove andare a operare. Di default si tocca il **dimensionamento della rete**, il **numero di epoche** (ved. dopo con le *callback*) e il **learning rate**. Solo successivamente si può intaccare l'inizializzazione dei pesi e la batch size.
+
+
+# Callbacks
+
+Valori di default con verboe=1.
+Sono molto utili per monitoraggio, gestione e manutenzione del processo di training.
+
+Le callbacks sono degli script che girano durante il training di un modello in keras. Sono molto utili per monitoraggio, gestione e manutenzione del processo di training. Posso usare callbacks predefinite o crearne di personalizzate.
+
+```{python}
+cb = tf.keras.callbacks.Callback()
+```
+È una **abstract base class**. Non posso istanziarla, ma posso ereditare da essa. Posso sovrascrivere i metodi per fare quello che mi serve.
+
+```{python}
+[x for x in dir(cb) if not x.startswith("_")]
+```
+Questi sono i metodi che offre l'interfaccia di questa classe. Vengono triggerati in momenti diversi del training.
+
+```{python}
+class MyCallBack(tf.keras.callbacks.Callback):
+  def on_train_begin(self, *args, **kwargs):
+    print("Training has begun")
+  def on_epoch_begin(self, epoch, args, **kwargs):
+    print("\nEpoch", epoch + 1, "has begun")
+  def on_epoch_end(self, epoch, logs, **kwargs):
+    print("Epoch", epoch + 1, "has ended.")
+    print("MY_val_loss", logs["val_loss"])
+  def on_train_end(self, *args, **kwargs):
+    print("\nTraining has ended")
+    print(args, kwargs)
+```
+
+Con args e kwargs posso passare qualsiasi cosa. Posso passare anche il modello stesso. In questo caso ci serve per vedere tutti gli argomenti dei singoli metodi.
+
+```{python}
+def get_model():
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=16, activation="relu", input_dim=30))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(
+    optimizer="adam",
+    loss="binary_crossentropy",
+    metrics=["accuracy"]
+    )
+  return model
+
+model = get_model()
+mycb = MyCallBack()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=5,
+  validation_data=(xtest, ytest),
+  verbose=2,
+  # callbacks è una lista
+  callbacks=[mycb]
+  );
+```
+
+# Custom callbacks
+
+Alla fine di ogni epoca vengono calcolate le metriche per ogni epoca. Posso fare un callback che mi salva le metriche ad ogni epoca.
+Le callbacks possono anche essere agganciate alla fase di predict.
+
+Ultima cosa interessante da vedere è il model.
+
+```{python}
+class MyCallBack(tf.keras.callbacks.Callback):
+  def on_train_begin(self, *args, **kwargs):
+    print("Training has begun")
+    print(dir(self.model))
+
+  def on_train_end(self, *args, **kwargs):
+    print("\nTraining has ended")
+    print(args, kwargs)
+  
+def get_model():
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=16, activation="relu", input_dim=30))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(
+    optimizer="adam",
+    loss="binary_crossentropy",
+    metrics=["accuracy"]
+    )
+  return model
+
+model = get_model()
+mycb = MyCallBack()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=5,
+  validation_data=(xtest, ytest),
+  verbose=0,
+  # callbacks è una lista
+  callbacks=[mycb]
+  );
+```
+
+Model è un oggetto con tantissimi attributi e metodi.Noi ci concentriamo sull'**optimizer**.
+
+```{python}
+class MyCallBack(tf.keras.callbacks.Callback):
+  def on_train_begin(self, *args, **kwargs):
+    print("Training has begun")
+  def on_epoch_begin(self, epoch, args, **kwargs):
+    print("\nEpoch", epoch + 1, "has begun")
+    # castato numpy() per stamparlo meglio
+    print("Learning rate", self.model.optimizer.learning_rate.numpy(), ".")
+  def on_epoch_end(self, epoch, logs, **kwargs):
+    print("Epoch", epoch + 1, "has ended.")
+    print("MY_val_loss", logs["val_loss"])
+  def on_train_end(self, *args, **kwargs):
+    print("\nTraining has ended")
+    print(args, kwargs)
+  
+def get_model():
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=16, activation="relu", input_dim=30))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(
+    optimizer="adam",
+    loss="binary_crossentropy",
+    metrics=["accuracy"]
+    )
+  return model
+
+model = get_model()
+mycb = MyCallBack()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=5,
+  validation_data=(xtest, ytest),
+  verbose=0,
+  # callbacks è una lista
+  callbacks=[mycb]
+  );
+```
+
+Il learning rate di default di Adam è 0.001. Posso modificarlo con un callback.
+
+```{python}
+class MyCallBack(tf.keras.callbacks.Callback):
+  def on_train_begin(self, *args, **kwargs):
+    print("Training has begun")
+  def on_epoch_begin(self, epoch, args, **kwargs):
+    print("\nEpoch", epoch + 1, "has begun")
+    # castato numpy() per stamparlo meglio
+    print("Learning rate", self.model.optimizer.learning_rate.numpy(), ".")
+  def on_epoch_end(self, epoch, logs, **kwargs):
+    print("Epoch", epoch + 1, "has ended.")
+    print("MY_val_loss", logs["val_loss"])
+  def on_train_end(self, *args, **kwargs):
+    print("\nTraining has ended")
+    print(args, kwargs)
+  
+def get_model():
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=16, activation="relu", input_dim=30))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=12),
+    loss="binary_crossentropy",
+    metrics=["accuracy"]
+    )
+  return model
+
+model = get_model()
+mycb = MyCallBack()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=5,
+  validation_data=(xtest, ytest),
+  verbose=1,
+  # callbacks è una lista
+  callbacks=[mycb]
+  );
+```
+
+Ovviamente 12 è un learning rate orribile, ma a fini didattici per vederlo stampato.
+
+```{python}
+class MyCallBack(tf.keras.callbacks.Callback):
+  def on_train_begin(self, *args, **kwargs):
+    print("Training has begun")
+  def on_epoch_begin(self, epoch, args, **kwargs):
+    print("\nEpoch", epoch + 1, "has begun")
+    if epoch == 2:
+      self.model.optimizer.learning_rate.assign(0.001)
+    print("Learning rate", self.model.optimizer.learning_rate.numpy(), ".")
+  def on_epoch_end(self, epoch, logs, **kwargs):
+    print("Epoch", epoch + 1, "has ended.")
+    print("MY_val_loss", logs["val_loss"])
+  def on_train_end(self, *args, **kwargs):
+    print("\nTraining has ended")
+    print(args, kwargs)
+  
+def get_model():
+  clear_session()
+  model = Sequential()
+  model.add(Dense(units=16, activation="relu", input_dim=30))
+  model.add(Dense(units=1, activation="sigmoid"))
+  model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=12.),
+    loss="binary_crossentropy",
+    metrics=["accuracy"]
+    )
+  return model
+
+model = get_model()
+mycb = MyCallBack()
+history = model.fit(
+  xtrain,
+  ytrain,
+  epochs=5,
+  validation_data=(xtest, ytest),
+  verbose=2,
+  # callbacks è una lista
+  callbacks=[mycb]
+  );
+```
+
+Stiamo solo attivando le funzioni che vogliao, non la performance.
+

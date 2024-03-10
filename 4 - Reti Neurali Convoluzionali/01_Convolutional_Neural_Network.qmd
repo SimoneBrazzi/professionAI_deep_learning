@@ -1,0 +1,1044 @@
+---
+title: "Addestramento e metodi di ottimizzazione"
+author: "Simone Brazzi"
+jupyter: dl
+format:
+  html:
+    theme:
+      dark: "darkly"
+      light: "flatly"
+execute: 
+  warning: false
+self_contained: true
+toc: true
+toc-depth: 2
+number-sections: true
+editor: 
+  markdown: 
+    wrap: sentence
+editor_options: 
+  chunk_output_type: console
+---
+
+# Introduzione ad AlexNet
+
+Prima CNN. La montiamo seguendo l'articolo.
+Oramai ha 10 anni, per cui è un dinosauro, ma i componenti fondamentali di **convoluzione** e **pooling** sono gli stessi.
+
+*The net contains 8 layers with weights; the first 5 are convolutional and the remaining 3 are fullyconnected. The output of the last fully-connected layer is fed to a 1000-way softmax which produces a distribution over the 1000 class labels.*
+
+La versione originale è su 2 GPU in parallelo, ma che non ha avuto seguito.
+Quando c'è qualcosa di distribuito, lo accorpiamo in un unico tensore.
+
+```{python}
+import warnings
+warnings.filterwarnings("ignore")
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+# Hide GPU from visible devices
+# tf.config.set_visible_devices([], 'GPU')
+```
+
+```{python}
+import tensorflow as tf
+import numpy as np
+from tensorflow.keras.backend import clear_session
+import matplotlib.pyplot as plt
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import InputLayer, Dense, Conv2D, MaxPool2D, BatchNormalization, Flatten, Dropout
+```
+
+```{python}
+clear_session()
+alexnet_1 = Sequential([
+  InputLayer(input_shape=(227, 227, 3)), # immagini 227x227 RGB.
+  Conv2D(
+    filters=96,
+    kernel_size=(11, 11),
+    strides=(4, 4), # quanto vado a dx e a capo ogni volta
+    padding='valid', # non aggiungo zeri. bordo attorno ad ogni immagine. "same" compensa la dimensione del filtro.
+    activation="relu"
+    )
+])
+
+alexnet_1.summary()
+```
+
+# Definiamo l'architettura di AlexNet
+
+kernel_size e stride di solito ora sono identiche.
+Pooling -\> schiaccia altezza e larghezza.
+Conv -\> aumenta la profondità.
+
+```{python}
+clear_session()
+alexnet_1 = Sequential([
+    InputLayer(input_shape=(227, 227,3)), # immagini 227x227 RGB
+    Conv2D(
+        filters=96,
+        kernel_size=(11,11), # cornice
+        strides=(4,4), # spostamento a destra e in basso
+        activation="relu"),
+    MaxPool2D(
+        pool_size=(3,3),
+        strides=(2,2)),
+    Conv2D(
+        filters=256, # 256 filtri
+        kernel_size=(5,5), # grossi 5x5
+        strides=(1,1),
+        padding="same", # ottengo la dimensione 5 da 1, dunque aggiungendo 2 e 2 a destra e sinistra dell'output di stride.
+        activation="relu"),
+  MaxPool2D(
+    pool_size=(3,3),
+    strides=(2,2)),
+  Conv2D(
+    filters=384, # 192 * 2 GPUs. Numero arbitrario ed empirico.
+    kernel_size=(3,3),
+    strides=(1,1),
+    padding="same",
+    activation="relu"),
+  Conv2D(
+    filters=384,
+    kernel_size=(3,3),
+    strides=(1,1),
+    padding="same",
+    activation="relu"),
+  Conv2D(
+    filters=256,
+    kernel_size=(3,3),
+    strides=(1,1),
+    padding="same",
+    activation="relu"),
+  MaxPool2D(
+    pool_size=(3,3),
+    strides=(2,2)),
+  Flatten(),
+  Dense(4096, activation="relu"),
+  Dense(4096, activation="relu"),
+  Dense(1000, activation="softmax")
+])
+
+alexnet_1.summary()
+```
+
+Questa è la sintassi di una prima approsimazione di una AlexNet.
+
+# Hidden Layer e strati di output
+
+*Our neural network architecture has 60 million parameters.*
+
+La prima parte fa **feature extraction**, la seconda Dense che fa la **classificazione per classi**, ossia di ML puro.
+Questa seconda parte ha 57 milioni di parametri, ossia la quasi totalità.
+In una CNN la parte pesante è quella dei layer densi (**weight sharing**).
+I maxpooling hanno 0 parametri, perché non devono imparare niente.
+è normale avere tanti layer convuluzionali con pochi pesi e pochi layer densi con tanti pesi.
+
+$$
+\frac {n_{input} + 2p - k}  {s} + 1
+$$ where:
+
+-   n~input~ is the input.
+
+-   p is the padding.
+
+-   k is the kernel size.
+
+-   s is the stride.
+
+```{python}
+((227 + 2*0 - 11) / 4) + 1
+```
+
+La prima dimensione è sempre il batch size.
+L'ultima dimensione è il filter.
+Con il flattening, sparisce l'ultima dimensione.
+
+Il padding="same" è un'operazione che fa in modo che l'output sia uguale all'input.
+Per questo motivo, il padding è 0.
+
+```{python}
+((27 + 2*2 - 5) / 1) + 1
+```
+
+Il flattening invece schiaccia tutto.
+
+```{python}
+6 * 6 * 256
+```
+
+I layer densi invece hanno il numero di neuroni hard coded.
+
+## Numero di parametri
+
+Il primo layer denso + dato dalle 9216 connessioni all'indietro per ogni neurone più il bias.
+
+```{python}
+4096 * (9216 + 1)
+```
+
+Così si spiegano anche gli altri layer densi.
+
+Capire cosa fanno i parametri di una convoluzione consente di capire cosa fa la rete.
+
+Per il primo layer Conv2D abbiamo 96 filtri, ognuno dei quali ha 11x11x3 pesi, più un bias per ogni filtro.
+Lo stride ci dice solo di quanto mi sposto, mentre il kernel è l'oggetto che ci da la dimensione.
+
+Il 3 indica i canali: ogni filtro 11x11 ha una terza dimensione di 3, che è il numero di canali
+
+```{python}
+96 * (11 * 11 * 3 + 1)
+```
+
+$$
+f * (k * 3 + 1)
+$$
+
+where: - f is the number of filters.
+- k is the kernel size.
+- 3 is the number of channels.
+- 1 is the bias.
+
+I kernel sono dei parallelepipedi che si spostano sull'immagine, non sono oggetti bidimensionali.
+La profondità di un kernel convoluzionale è il punto.
+
+Cosa stiamo ancora ignorando?
+
+-   Inizializzazione pesi.
+    *We initialized the weights in each layer from a zero-mean Gaussian distribution with sd 0.01.*
+
+-   Inizializzazione bias.
+    *We initialized the neuron biases in the second, fourth and fifth convolutional layers, as well as in the fully-connected hidden layers, with the constant 1. \[...\] We initialized the neuron biases in the remaining layers with the constant 0.*
+
+-   Inserimento batch normalization.
+    *Response-normalization layers follow the first and second convolutional layers.*
+
+-   Inserimento dropout.
+    *The recently-introduced technique, called dropout, consists of setting to zero the output of each hidden neauron with probability 0.5. We use dropout in the first 2 fully-connected layers.* Il dropout oramai è standard e fondamentale.
+    è una forma di regolarizzazione.
+
+```{python}
+from tensorflow.keras.initializers import RandomNormal
+
+w_init = RandomNormal(mean=0, stddev=0.01)
+clear_session()
+alexnet_2 = Sequential([
+    InputLayer(input_shape=(227, 227,3)), # immagini 227x227 RGB
+    Conv2D(
+        filters=96,
+        kernel_size=(11,11), # cornice
+        kernel_initializer=w_init, # i pesi sono inizializzati con una distribuzione normale
+        bias_initializer="zeros",
+        strides=(4,4), # spostamento a destra e in basso
+        activation="relu"),
+    BatchNormalization(),
+    MaxPool2D(
+        pool_size=(3,3),
+        strides=(2,2)),
+    Conv2D(
+        filters=256, # 256 filtri
+        kernel_size=(5,5), # grossi 5x5
+        kernel_initializer=w_init,
+        bias_initializer="ones", # i bias sono inizializzati a 1
+        strides=(1,1),
+        padding="same", # ottengo la dimensione 5 da 1, dunque aggiungendo 2 e 2 a destra e sinistra dell'output di stride.
+        activation="relu"),
+  BatchNormalization(),
+  MaxPool2D(
+    pool_size=(3,3),
+    strides=(2,2)),
+  Conv2D(
+    filters=384, # 192 * 2 GPUs. Numero arbitrario ed empirico.
+    kernel_size=(3,3),
+    kernel_initializer=w_init,
+    bias_initializer="zeros",
+    strides=(1,1),
+    padding="same",
+    activation="relu"),
+  Conv2D(
+    filters=384,
+    kernel_size=(3,3),
+    kernel_initializer=w_init,
+    bias_initializer="ones", # i bias sono inizializzati a 1
+    strides=(1,1),
+    padding="same",
+    activation="relu"),
+  Conv2D(
+    filters=256,
+    kernel_size=(3,3),
+    kernel_initializer=w_init,
+    bias_initializer="ones", # i bias sono inizializzati a 1
+    strides=(1,1),
+    padding="same",
+    activation="relu"),
+  MaxPool2D(
+    pool_size=(3,3),
+    strides=(2,2)),
+  Flatten(),
+  Dense(
+    4096,
+    activation="relu",
+    kernel_initializer=w_init,
+    bias_initializer="ones" # i bias sono inizializzati a 1
+    ),
+  Dropout(.5),
+  Dense(
+    4096,
+    activation="relu",
+    kernel_initializer=w_init,
+    bias_initializer="ones" # i bias sono inizializzati a 1)
+    ),
+  Dropout(.5),
+  Dense(
+    1000,
+    activation="softmax",
+    kernel_initializer=w_init,
+    bias_initializer="zeros" # i bias sono inizializzati a 1)
+    )
+])
+```
+
+Questa è la rete di prima come dimensionamenti e come descritta nel paper.
+Lo scopo è di dimostrare come sia complesso implementare un paper.
+
+*Our network maximizes the multinomial logistic regression objective, which is equivalent to maximizing the average across training cases of the log-probability of the correct label under the prediction distribution. We trained our models using stochastic gradient descent with a batch size of 128 examples, momentum of 0.9 and weight decay of .0005. We used an equal learning rate for all layers, which we adjusted manually throughout training.*
+
+Stiamo facendo una classificazione multiclasse e ci sono indicazioni su momentum e weight decay, per avere più controllo sullo scheduling del learning rate.
+L'aggiustamento manuale del learning rate è brutto, ma è un problema che si risolve con un ciclo di learning rate.
+Di solito gli iperparametri vengono forniti con più dettagli.
+
+```{python}
+dummy_input = np.random.rand(128, 227, 227, 3)
+dummy_output = alexnet_2.predict(dummy_input)
+dummy_output.shape
+```
+
+La rete non è trainata, per cui non ha senso a livello di risultato.
+Lo scopo è vedere che i 128 datapoint (tensore (227,227,3)) hanno una distribuzione su 1000 neuroni di output.
+
+```{python}
+np.sum(dummy_output[0])
+```
+
+Ritorna 1 poiché l'output proviene da una softmax.
+
+# Immagini come array
+
+```{python}
+import numpy as np
+import matplotlib.pyplot as plt
+from tensorflow.keras.preprocessing.image import load_img, array_to_img, img_to_array
+```
+
+## Immagine
+
+```{python}
+img = load_img("/Users/simonebrazzi//R/professionAI_deep-learning-e-reti-neurali-artificiali/4 - Reti Neurali Convoluzionali/images/cat.jpg")
+type(img)
+```
+
+Versione macchina
+
+```{python}
+img_to_array(img)
+```
+
+```{python}
+np_cat = img_to_array(img) / 255
+plt.imshow(np_cat)
+plt.show()
+plt.close()
+```
+
+Questo consente di lavorare con una numpy array e seguire la visualizzazione.
+
+Il subset dell'immagine segue la stessa logica del subset per una np.array().
+
+```{python}
+plt.subplot(1,3,1)
+plt.imshow(np_cat[:, :300])
+plt.subplot(1,3,2)
+plt.imshow(np_cat[:, -300:])
+plt.subplot(1,3,3)
+plt.imshow(np_cat[:, 150:-150])
+plt.show()
+plt.tight_layout()
+
+```
+
+Downsample: tutte le righe dalla prima all'ultima, ma ogni 50.
+
+```{python}
+plt.imshow(np_cat[::50,::50])
+plt.show()
+```
+
+Si possono visualizzare anche i singoli canali.
+
+```{python}
+plt.imshow(np_cat[:,:,1])
+plt.show()
+plt.close()
+```
+
+# Modelli pre-addestrati di tf.keras
+
+Lista di reti neurali.
+
+```{python}
+[x for x in dir(tf.keras.applications) if not x.startswith("_")]
+```
+
+```{python}
+trained_model = tf.keras.applications.MobileNetV2()
+```
+
+```{python}
+type(trained_model)
+trained_model.summary()
+```
+
+È una rete con tantissimi layer e con solo 3.5 ml di parametri: tipico delle reti moderne, che tendono ad essere più compatte.
+Numero di layer: `{python} len(trained_model.layers)`.
+
+## Trials and errors
+
+```{python}
+# trained_model.predict(np_cat)
+```
+
+ValueError: Input 0 of layer "mobilenetv2_1.00_224" is incompatible with the layer: expected shape=(None, 224, 224, 3), found shape=(None, 2853, 3).
+
+Le reti neurali funzionano in batch.
+La dimensione dell'input è (None, 224, 224, 3), ma l'immagine è di dimensione 2853x3.
+Si può fare un resize dell'immagine.
+
+```{python}
+batch_cat = np.expand_dims(np_cat, 0)
+print(np_cat.shape, batch_cat.shape)
+```
+
+Ora abbiamo la prima dimensione che indica che stiamo passando una batch di 1 immagine.
+Bisogna ancora fare un resize dell'immagine a 224x224.
+
+```{python}
+img = load_img("/Users/simonebrazzi/R/professionAI_deep-learning-e-reti-neurali-artificiali/4 - Reti Neurali Convoluzionali/images/cat.jpg", target_size=(224,224))
+np_cat = img_to_array(img) / 255
+batch_cat = np.expand_dims(np_cat, 0)
+predictions = trained_model.predict(batch_cat)
+```
+
+img è l'immagine, ma importata 224x224.
+np_cat è una numpy array 224x224x3.
+batch_cat: la rete neurale lavora a batch, per cui aggiungo una nuova dimensione.
+predictions è un array di 1000 elementi, che rappresentano le probabilità di appartenenza a ciascuna delle 1000 classi.
+`{python} predictions.shape`.
+Predictions somma a `{python}np.sum(predictions[0])`.
+
+```{python}
+plt.plot(predictions[0])
+plt.show()
+plt.close()
+```
+
+La rete è stata trainata su ImageNet, per cui è molto brava a riconoscere oggetti.
+
+La rete è sicura al `{python} np.max(predictions[0])` che l'immagine sia l'oggetto `{python} np.argmax(predictions[0])`.
+
+```{python}
+tf.keras.applications.mobilenet_v2.decode_predictions(predictions)
+```
+
+Un neurone si è preso il 0.54 che l'immagine sia un "tiger_cat".
+In alcuni casi serve ulteriore preprocessing dell'immagine, ma in questo caso non è servito.
+
+```{python}
+preprecessed_cat = tf.keras.applications.mobilenet_v2.preprocess_input(
+  batch_cat
+)
+preprecessed_cat.shape
+```
+
+La shape non cambia.
+
+## Pipeline di predizione
+
+Creiamo una funzione per avere tutta la pipeline insieme.
+
+```{python}
+from tensorflow.keras.applications.mobilenet_v2 import decode_predictions, preprocess_input
+
+def pretrained_prediction(model, filename):
+  
+  img = load_img(filename, target_size=(224, 224))
+  plt.imshow(img)
+  plt.show()
+  img = np.expand_dims(img,0)
+  prediction = model.predict(preprocess_input(img))
+  return decode_predictions(prediction)
+
+pretrained_prediction(trained_model, "/Users/simonebrazzi/R/professionAI_deep-learning-e-reti-neurali-artificiali/4 - Reti Neurali Convoluzionali/images/cat.jpg")
+```
+
+```{python}
+pretrained_prediction(trained_model, "/Users/simonebrazzi/R/professionAI_deep-learning-e-reti-neurali-artificiali/4 - Reti Neurali Convoluzionali/images/dog.jpeg")
+```
+
+Il limite di questo modello è su quali immagini è stato addestrato: se tra i 1000 neuroni non c'è l'output, la rete distribuisce il segnale come meglio riesce su altri neuroni di output.
+Non solo serve un modello pretrainato, ma deve essere stato allenato per una classificazione (in questo caso) specifica per il tipo di task che vogliamo risolvere.
+
+```{python}
+pretrained_prediction(trained_model, "/Users/simonebrazzi/R/professionAI_deep-learning-e-reti-neurali-artificiali/4 - Reti Neurali Convoluzionali/images/ironman.jpeg")
+```
+
+# Addestriamo la nostra CNN
+
+Il training è su un caso semplificato e ridotto, altrimenti sarebbe molto doloroso.
+
+```{python}
+import warnings
+warnings.filterwarnings("ignore")
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+# Hide GPU from visible devices
+# tf.config.set_visible_devices([], 'GPU')
+import numpy as np
+import pickle
+import matplotlib.pyplot as plt
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import InputLayer, Input, Conv2D, Dense, Flatten, Dropout, MaxPool2D, BatchNormalization
+from tensorflow.keras.models import Model
+from tensorflow.keras.backend import clear_session
+```
+
+Canadian Institute For Advanced Reasearch
+
+```{python}
+cifar10 = tf.keras.datasets.cifar10
+(xtrain, ytrain), (xtest, ytest) = cifar10.load_data()
+labels = ["airplane", "automobile", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck"]
+
+xtrain.shape, ytrain.shape, xtest.shape, ytest.shape
+```
+
+Le immagini sono 32x32x3.
+Le label sono unidimensionali (vettori colonna).
+Abbiamo 10 categorie, quelle di labels.
+Per questo motivo è una rete molto semplice rispetto ImageNet.
+
+Y train ha gli indici delle labels.
+
+```{python}
+ytrain[:10]
+```
+
+```{python}
+plt.figure(figsize=(2,2))
+indx = np.random.choice(range(50000)) # random selection of an img
+plt.imshow(xtrain[indx])
+plt.title(labels[ytrain[indx][0]]) # uso lables invece di ytrain, siccome ho il decoding
+plt.show()
+plt.close()
+```
+
+Preprocessing delle immagini Normalizzazione delle features e linearizzazione delle labels.
+
+```{python}
+xtrain, xtest = xtrain/255., xtest/255.
+ytrain, ytest = ytrain.flatten(), ytest.flatten()
+```
+
+```{python}
+w_init = tf.keras.initializers.RandomNormal(stddev=0.01)
+cnn1 = Sequential([
+    InputLayer(input_shape=(32,32,3)),
+    Conv2D(filters=96, kernel_size=(3,3), strides=(1,1), 
+           kernel_initializer=w_init, bias_initializer='zeros',activation='relu'),
+    BatchNormalization(),
+    MaxPool2D(pool_size=(3,3), strides=(2,2)),
+    Conv2D(filters=256, kernel_size=(3,3), strides=(1,1), activation='relu', 
+           kernel_initializer=w_init, bias_initializer='ones',padding="same"),
+    BatchNormalization(),
+    MaxPool2D(pool_size=(3,3), strides=(2,2)),
+    Conv2D(filters=384, kernel_size=(3,3), strides=(1,1), activation='relu', 
+           kernel_initializer=w_init, bias_initializer='zeros',padding="same"),
+    Conv2D(filters=384, kernel_size=(3,3), strides=(1,1), activation='relu', 
+           kernel_initializer=w_init, bias_initializer='ones',padding="same"),
+    Conv2D(filters=256, kernel_size=(3,3), strides=(1,1), activation='relu', 
+           kernel_initializer=w_init, bias_initializer='ones',padding="same"),
+    MaxPool2D(pool_size=(3,3), strides=(2,2)),
+    Flatten(),
+    Dense(4096, kernel_initializer=w_init, bias_initializer='ones', activation='relu'),
+    Dropout(0.5),
+    Dense(4096, kernel_initializer=w_init, bias_initializer='ones', activation='relu'),
+    Dropout(0.5),
+    Dense(10, kernel_initializer=w_init, bias_initializer='zeros', activation='softmax')
+])
+```
+
+```{python}
+cnn1.compile(
+  optimizer="adam",
+  loss="sparse_categorical_crossentropy",
+  metrics=["accuracy"]
+)
+```
+
+```{python}
+hist1 = cnn1.fit(
+  xtrain,
+  ytrain,
+  validation_data=(xtest, ytest),
+  epochs=5 # partiamo bassi per vedere se sta apprendendo
+  )
+```
+
+# Valutazione del modello
+
+```{python}
+plt.figure(figsize=(12, 4))
+plt.subplot(1,2,1)
+plt.plot(hist1.history['accuracy'], label='accuracy')
+plt.plot(hist1.history['val_accuracy'], label='val_accuracy')
+plt.legend()
+plt.subplot(1,2,2)
+plt.plot(hist1.history['loss'], label='loss')
+plt.plot(hist1.history['val_loss'], label='val_loss')
+plt.legend()
+plt.show()
+plt.close()
+```
+
+L'accuracy sale, la validation scende.
+Il modello funziona, anche se ballerino in validation.
+Questo è un punto di partenza esemplificativo.
+AlexNet è un modello piccolo e copia-incollabile.
+
+## Versione migliorata
+
+Parte da AlexNet + buon senso ed esperienza.
+Stesso padding ovunque.
+Semplificato pooling prendendo il default: prendere blocchetti 2x2 e fare il massimo.
+Regolarizzata la struttura della rete: Conv-Batch-Conv-Batch-Pooling.
+Ridotto il numero di neuroni nella parte densa, per rimuovere parametri.
+Ridotto Dropout per ridurre tempistiche di training.
+
+```{python}
+cnn2 = Sequential([
+    InputLayer(input_shape=(32,32,3)),
+    Conv2D(32, (3, 3), activation='relu', padding='same'),
+    BatchNormalization(),
+    Conv2D(32, (3, 3), activation='relu', padding='same'),
+    BatchNormalization(),
+    MaxPool2D(),
+    #
+    Conv2D(32, (3, 3), activation='relu', padding='same'),
+    BatchNormalization(),
+    Conv2D(32, (3, 3), activation='relu', padding='same'),
+    BatchNormalization(),
+    MaxPool2D(),
+    #
+    Conv2D(32, (3, 3), activation='relu', padding='same'),
+    BatchNormalization(),
+    Conv2D(32, (3, 3), activation='relu', padding='same'),
+    BatchNormalization(),
+    MaxPool2D(),
+    #
+    Flatten(),
+    Dropout(0.2),
+    Dense(1024, activation='relu'),
+    Dropout(0.2),
+    Dense(10, activation='softmax')])
+```
+
+```{python}
+cnn2.compile(
+  optimizer="adam",
+  loss="sparse_categorical_crossentropy",
+  metrics=["accuracy"]
+)
+```
+
+### Piccolo trucco: **data augmentation**
+
+Si cambiano le immagini mandate alla rete neurale.
+È built in in Keras.
+Questo consente di aumentare il dataset e di rendere il modello più robusto.
+train_generator applica le modifiche per batch, un po' per volta.
+
+```{python}
+batch_size = 32
+data_generator = tf.keras.preprocessing.image.ImageDataGenerator(
+    width_shift_range=0.1, height_shift_range=0.1, horizontal_flip=True
+    )
+train_generator = data_generator.flow(xtrain, ytrain, batch_size)
+steps_per_epoch = xtrain.shape[0] // batch_size
+```
+
+Intanto testo il modello con la nuova struttura e senza training, per avere una base di partenza.
+Mi aspetto l'accuracy sia vicino al 0.1.
+
+```{python}
+cnn2.evaluate(xtest, ytest)
+```
+
+training
+
+```{python}
+hist2 = cnn2.fit(
+  train_generator,
+  validation_data=(xtest, ytest),
+  steps_per_epoch=steps_per_epoch,
+  epochs=5
+  )
+```
+
+Una volta che ho addestrato una rete, che ne faccio?
+La salvo su disco.
+
+```{python}
+cnn2.save_weights("cnn2.weights.h5")
+pickle.dump(hist2.history, open("cnn2_history.pkl", "wb"))
+```
+
+Una volta caricata la rete **pretrainata**, posso fare un check della performance del modello.
+
+```{python}
+cnn2.evaluate(xtest, ytest)
+```
+
+Ho copiato i valori dei parametri dentro la rete e con pickle ho salvato la storia del training.
+Posso caricare la rete e la storia del training e fare un plot.
+
+```{python}
+plt.figure(figsize=(12, 4))
+plt.subplot(1,2,1)
+plt.plot(hist2.history['accuracy'], label='accuracy')
+plt.plot(hist2.history['val_accuracy'], label='val_accuracy')
+plt.legend()
+plt.subplot(1,2,2)
+plt.plot(hist2.history['loss'], label='loss')
+plt.plot(hist2.history['val_loss'], label='val_loss')
+plt.legend()
+plt.show()
+plt.close()
+```
+
+Posso seguire l'andamento del training sia con accuracy che loss.
+Posso aumentare le epoche, ma richiede più tempo.
+La soluzione non è ottimale, ma sta imparando.
+Senza data augmentation, il training sarebbe peggiore.
+Così facendo ho un modello più robusto.
+Per migliorare ancora la performance in base alle richieste potrei:
+
+-   aumentare il numero di epoche.
+-   aumentare le iterazioni.
+-   usare un altro optimizer per ridurre le oscillazioni della validation accuracy e loss.
+
+Salvare su file consente anche di fare confronti tra modelli diversi e di fare ensemble learning.
+
+# Generatori di immagini
+
+Vediamo un esempio pratico di **transfer learning** su CNN.
+Lo montiamo da zero, siccome è un esempio didattico.
+L'idea è di avere una richiesta di classificazione binaria avendo poche immagini a disposizione: è sia un campanello di allarme di fare transfer learning, sia una situazione tipica di business.
+
+```{python}
+#say no to warnings!
+import warnings
+warnings.filterwarnings("ignore")
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+```
+
+```{python}
+import matplotlib.pyplot as plt
+import numpy as np
+from tensorflow.keras.preprocessing.image import \
+    ImageDataGenerator,load_img,array_to_img,img_to_array
+from tensorflow.keras.applications import resnet50,ResNet50
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dense
+from tensorflow.keras.models import Model
+```
+
+Residual Network: le connessioni residuali erano la parte innovativa.
+È sempre un CNN con la stessa logica di convoluzioni per fare feature extraction e flatten o pooling per ottenere un vettore di feature per ogni immagine, per finire con layer densi.
+
+```{python}
+import os
+path = "/Users/simonebrazzi/datasets/rural_and_urban_photos/"
+os.listdir(path + "train/urban/")[0]
+```
+
+```{python}
+plt.imshow(load_img(path + "train/urban/urban_33.jpeg"))
+plt.show()
+plt.close()
+```
+
+```{python}
+len(os.listdir(path + "train/urban/")), len(os.listdir(path + "train/rural/"))
+```
+
+Il dataset è bilanciato, ma abbiamo solo 72 datapoints.
+Anche usando data augmentationm non è un numero sufficiente.
+Qui il transfer learning è l'unica opzione possibile.
+
+Ci sono molti modi per caricare un dataset diviso in folders multiple.
+Keras ha ImageDataGenerator(), ossia un generatore di immagini.
+Lo possiamo usare anche per caricare immagini dal disco.
+
+```{python}
+train_datagen = ImageDataGenerator()
+train_generator = train_datagen.flow_from_directory(
+  directory=path + "train/"
+  )
+len(next(train_generator))
+```
+
+```{python}
+next(train_generator)[0].shape
+```
+
+Abbiamo una batch di 32 immagini, ognuna con 256x256 pixel e 3 canali.
+Il generatore di immagini è un iterator che restituisce un batch di immagini e le rispettive etichette.
+È un'ottima soluzione per dataset molto grandi, perché non carica tutto in memoria, ma solo un batch alla volta.
+Il 32 ci indica che le immagini sono caricate a batch di 32.
+Il 256 non va bene, siccome imagenet richiede immagini 224x224.
+Dobbiamo fare un preprocessing delle immagini.
+
+```{python}
+train_datagen = ImageDataGenerator(
+  preprocessing_function=resnet50.preprocess_input
+)
+train_generator = train_datagen.flow_from_directory(
+  directory=path + "train/",
+  target_size=(224, 224),
+  batch_size=72 # tutte le immagini
+  )
+next(train_generator)[0].shape
+```
+
+Quando passo l'immagine in un modello pretrainato **DEVO** fare il preprocessing, altrimenti la predizione non è attendibile.
+Il **preprocessing** è specifico per ogni modello, quindi devo usare il preprocessing di resnet50.
+Senza, sto usando il modello male.
+
+I valori sono stati riscalati.
+
+```{python}
+next(train_generator)[0]
+```
+
+Posso fare la stessa cosa con il test set.
+
+```{python}
+test_datagen = ImageDataGenerator(
+  preprocessing_function=resnet50.preprocess_input
+  )
+test_generator = test_datagen.flow_from_directory(
+  directory=path + "val/",
+  target_size=(224, 224),
+  batch_size=20,
+  shuffle=False
+  )
+```
+
+```{python}
+test_datagen = ImageDataGenerator()
+raw_xtest, ytest = next(
+  test_datagen.flow_from_directory(
+  directory=path + "val/",
+  target_size=(224, 224),
+  batch_size=20,
+  shuffle=False
+  )
+  )
+
+xtest = resnet50.preprocess_input(raw_xtest)
+```
+
+```{python}
+raw_xtest.shape, ytest.shape
+```
+
+Ho 20 immagini, ognuna con 224x224 pixel e 3 canali.
+ytest ha 20 etichette.
+
+```{python}
+raw_xtest[0]
+```
+
+Le immagini in raw_xtest non sono ancora state preprocessate.
+Questo ci servirà per i plot.
+La rete neurale deve essere trainata sul preprocessing, per evitare gatti tende da doccia.
+
+raw_xtest serve per visualizzare le immagini, xtest per fare validazione.
+
+# Utilizziamo il transfer learning
+
+## Modello
+
+*weights* ci dice che il modello è pretrainato.
+é di default è True, ossia prende tutto il modello.
+Con False, ci toglie gli ultimi layer.
+
+```{python}
+base_model = ResNet50(
+  weights='imagenet', 
+  include_top=False
+  )
+```
+
+```{python}
+#for i, layer in enumerate(base_model.layers):
+#  print(i, layer.name)
+```
+
+Abbiamo 174 layers con tantissime convoluzioni.
+
+```{python}
+base_model.summary()
+```
+
+Ora posso aggiungere i layers per il nostro task.
+Il modo più semplice è con API funzionale.
+
+Schiaccio i risultati, ossia un Flatten.
+Un'alternativa al Flatten è il GlobalAveragePooling2D.
+
+GlobalAveragePooling2D trasforma un oggetto 3D in 1D.
+Invece che linearizzare fa dei pooling, così da ottenere una dimensione più compatta.
+GlobalAveragePooling2D crea un layer funzionale e lo applico funzionalmente su x con (x).
+Ora ho un vettore.
+I vari layers densi non hanno una ricetta: si va per tentativi
+
+```{python}
+x = base_model.output
+x = GlobalAveragePooling2D()(x)
+x = Dense(1024, activation="relu", name="my_layer_1")(x)
+x = Dense(512, activation="relu", name="my_layer_2")(x)
+pred = Dense(2, activation="softmax", name="my_layer_3")(x)
+```
+
+Ora metto insieme con Model().
+
+```{python}
+transfer_model = Model(
+  inputs=base_model.input, # entro con il modello pretrainato.
+  outputs=pred # ultimo layer
+  )
+```
+
+```{python}
+len(base_model.layers), len(transfer_model.layers)
+```
+
+```{python}
+transfer_model.summary()
+```
+
+I primi 174 layers sono congelati, ossia non si aggiornano.
+I layers aggiunti sono trainable e sono i my_layers_1,2 e 3, oltre al pooling.
+
+```{python}
+for i, l in enumerate(transfer_model.layers):
+  print(i, l.name, l.trainable)
+
+```
+
+Ancora 2 accortezze: 1.
+I nuovi layers devono essere **addestrabili**.
+Se non lo sono, non si aggiornano.
+Ai vecchi devo applicare il **freezing**.
+
+```{python}
+for layers in transfer_model.layers[:175]:
+  layers.trainable = False
+  
+for layers in transfer_model.layers[175:]:
+  layers.trainable = True
+```
+
+2.  Manca il compile
+
+```{python}
+transfer_model.compile(
+  optimizer="adam", # sempre un buon punto di partenza
+  loss="categorical_crossentropy",
+  metrics=["accuracy"]
+  )
+```
+
+## Training
+
+Test per saggiare il valore atteso.
+Già che non si rompa è un buon risultato.
+Di per sé è un coin flip.
+
+```{python}
+transfer_model.evaluate(xtest, ytest)
+```
+
+```{python}
+history = transfer_model.fit(
+  train_generator,
+  steps_per_epoch=2, # 72/32 = 
+  epochs=5,
+  validation_data=(xtest, ytest)
+  )
+```
+
+```{python}
+transfer_model.evaluate(xtest, ytest)
+```
+
+## Plot
+
+```{python}
+plt.imshow(array_to_img(raw_xtest[0]))
+plt.show()
+plt.close()
+
+ytest[0]
+```
+
+```{python}
+cnames = ["rural", "urban"]
+```
+
+```{python}
+predictions = transfer_model.predict(xtest)
+```
+
+Le predictions sono una matrice.
+Noi vogliamo sapere quale classe viene predetta.
+
+```{python}
+str_preds = np.array(cnames)[np.argmax(predictions, axis=1)]
+```
+
+```{python}
+plt.figure(figsize=(20,16))
+for k in range(20):
+  plt.subplot(4, 5, k+1)
+  #plt.plot([1,2,3]) -> line plot to create the template
+  plt.imshow(array_to_img(raw_xtest[k]))
+  plt.xticks([], [])
+  plt.yticks([], [])
+  ml_pred = str_preds[k]
+  gt_label = cnames[np.argmax(ytest[k])]
+  #plt.title(k, fontsize = 10)
+  plt.title(
+    gt_label,
+    fontsize=15,
+    color="black" if ml_pred == gt_label else "red"
+    )
+plt.tight_layout();
+plt.show()
+plt.close()
+```
