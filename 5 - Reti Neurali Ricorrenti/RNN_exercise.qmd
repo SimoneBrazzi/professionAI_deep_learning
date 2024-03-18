@@ -1,0 +1,176 @@
+---
+title: "RNN Exercise: Machine Translation"
+author: "Simone Brazzi"
+jupyter: "r-tf"
+format:
+  html:
+    theme:
+      dark: "darkly"
+      light: "flatly"
+execute: 
+  warning: false
+self_contained: true
+toc: true
+toc-depth: 2
+number-sections: true
+editor: 
+  markdown: 
+    wrap: sentence
+editor_options: 
+  chunk_output_type: console
+---
+
+Costruire un modello sequenziale per la traduzione (dall'inglese all'italiano). Il modello prende una sequenza in inglese e torna in output una sequenza in italiano:
+
+- Costruire le sequenze ed effettuare il padding per entrambe le lingue (NB: le sequenze vanno paddate alla maxlen di entrambe le lingue)
+- Dividi il dataset tra train e test con il 20% di test_size
+- Definire un modello che abbia uno strato di embedding e almeno due strati ricorrenti e in uscita uno strato Dense con il numero di neuroni pari al vocabolario per la traduzione (italiano)
+NB: Per migliorare le performance sullo strato Dense conviene applicare un layer TimeDistributed in questo modo TimeDistributed(Dense())
+- Eseguire l'addestramento per almeno 100 epoche
+
+[link](https://medium.com/@ashishjamarkattel123/language-translation-8e24b4e40928)
+
+Modello SEQ2SEQ da inglese ad italiano.
+
+# Setup
+```{python}
+import warnings
+warnings.filterwarnings("ignore")
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
+import os
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from tensorflow.keras.models import Sequential, Model 
+from tensorflow.keras.layers import Dense, Embedding, LSTM, TimeDistributed, Input, Bidirectional
+
+from tensorflow.keras.backend import clear_session
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.backend import clear_session
+
+from sklearn.model_selection import train_test_split
+```
+
+# Dataset
+```{python}
+path = "/Users/simonebrazzi/datasets/bilingual/ita.txt"
+# set header to eng and ita and index to False
+df = pd.read_csv(
+  path,
+  delimiter="\t",
+  header=None,
+  names=["eng", "ita"],
+  index_col=False
+  )
+df.head()
+```
+
+```{python}
+df.shape
+```
+
+```{python}
+df = df.sample(50000, random_state=42)
+x = df.eng.values
+y = df.ita.values
+
+xtrain, xtest, ytrain, ytest = train_test_split(
+  x,
+  y,
+  test_size=.2,
+  random_state=42
+)
+```
+
+# Tokenization
+
+```{python}
+def tokenization(xtrain, xtest):
+    
+    tokenizer = Tokenizer()
+    tokenizer.fit_on_texts(xtrain)
+    train_seq = tokenizer.texts_to_sequences(xtrain)
+    test_seq = tokenizer.texts_to_sequences(xtest)
+    vocabulary_size = len(tokenizer.word_index) + 1
+    maxlen = len(max(train_seq, key=len))
+    padded_train_seq = pad_sequences(
+        train_seq,
+        maxlen=maxlen,
+        padding="pre"
+        )
+    padded_test_seq = pad_sequences(
+        test_seq,
+        maxlen=maxlen,
+        padding="pre"
+        )
+    
+    return (vocabulary_size, maxlen, padded_train_seq, padded_test_seq)
+
+vocabulary_size_x, maxlen_x, padded_train_seq_x, padded_test_seq_x = tokenization(xtrain, xtest)
+vocabulary_size_y, maxlen_y, padded_train_seq_y, padded_test_seq_y = tokenization(ytrain, ytest)
+tmp_x = pad_sequences(padded_train_seq_x, max(maxlen_x, maxlen_y))
+tmp_x.shape
+```
+
+# Model
+```{python}
+clear_session()
+model = Sequential()
+model.add(Embedding(vocabulary_size_x, 512, input_shape=(maxlen_y,)))
+model.add(Bidirectional(LSTM(256, return_sequences=True, activation="tanh")))
+model.add(Bidirectional(LSTM(256, return_sequences=True, activation="tanh")))
+model.add(TimeDistributed(Dense(vocabulary_size_y, activation="softmax")))
+model.summary()
+```
+
+
+```{python, eval=FALSE}
+clear_session()
+inputs = Input(shape=(vocabulary_size_x,))
+embedding = Embedding(
+  input_dim=vocabulary_size_x,
+  output_dim=512,
+  input_shape=(maxlen_y,)
+  )(inputs)
+lstm_1 = Bidirectional(LSTM(256, return_sequences=True))(embedding)
+lstm_2 = Bidirectional(LSTM(256, return_sequences=True))(lstm_1)
+outputs = TimeDistributed(Dense(
+  vocabulary_size_y,
+  activation="softmax"
+  ))(lstm_2)
+model = Model(inputs=inputs, outputs=outputs)
+```
+
+```{python}
+model.compile(
+  optimizer="rmsprop",
+  loss="sparse_categorical_crossentropy",
+  metrics=["accuracy"]
+)
+```
+
+```{python}
+model.fit(
+  tmp_x,
+  padded_train_seq_y,
+  epochs=5,
+  batch_size=512,
+  validation_split=.2
+)
+```
+
+```{python}
+xtest_tmp = pad_sequences(padded_test_seq_x, max(maxlen_x, maxlen_y))
+model.evaluate(xtest_tmp, padded_test_seq_y)
+```
+```{python}
+model.save("/Users/simonebrazzi/R/professionAI_deep_learning/5 - Reti Neurali Ricorrenti/seq2seq.keras")
+```
+
+
+

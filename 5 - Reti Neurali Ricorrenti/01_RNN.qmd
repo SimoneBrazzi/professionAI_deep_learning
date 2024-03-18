@@ -1,0 +1,238 @@
+---
+title: "Recurrent Neural Networks"
+author: "Simone Brazzi"
+jupyter: "r-tf"
+format:
+  html:
+    theme:
+      dark: "darkly"
+      light: "flatly"
+execute: 
+  warning: false
+self_contained: true
+toc: true
+toc-depth: 2
+number-sections: true
+editor: 
+  markdown: 
+    wrap: sentence
+editor_options: 
+  chunk_output_type: console
+---
+
+# Creiamo il vocabolario
+
+```{python}
+import warnings
+warnings.filterwarnings('ignore')
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
+import numpy as np
+import matplotlib.pyplot as plt
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import Embedding, Dense
+from tensorflow.keras.backend import clear_session
+from sklearn.preprocessing import LabelEncoder
+```
+
+```{python}
+corpus = [
+  "il film mi è piaciuto, trama avvincente, piena di colpi di scena. Andatelo a vedere tutti!",
+  "questa pellicola è davvero molto interessante",
+  "è stato un fiasco. Il film è noioso e lento",
+  "devo dire che, anche se lento, il film è interessante",
+  "questo film non mi è piaciuto per niente, lo sconsiglio"
+]
+```
+
+Il Tokenizer consente di preprocessare il testo e costruire il vocabolario.
+```{python}
+tokenizer = Tokenizer(num_words=10)
+```
+
+Stiamo per creare un vocabolario usando il Tokenizer.
+```{python}
+tokenizer.fit_on_texts(corpus)
+```
+
+Prende il corpus e, in base ad esso, crea un vocabolario.
+
+```{python}
+tokenizer.word_index
+tokenizer.index_word
+tokenizer.document_count
+tokenizer.word_counts
+```
+
+Il +1 serve per il padding.
+```{python}
+vocabulary_size = len(tokenizer.word_index) + 1
+print(f"Vocabulary size: {vocabulary_size}")
+```
+
+Un carattere è riservato al padding.
+
+## Creiamo le sequenze
+
+Prende in input il corpus e ritorna una sequenza.
+```{python}
+sequences = tokenizer.texts_to_sequences(corpus)
+print(f"sequences: {sequences}")
+```
+
+Lista di liste, ogni lista rappresenta una frase. Esiste anche la funzione opposta.
+
+```{python}
+texts = tokenizer.sequences_to_texts(sequences)
+print(f"texts: {texts}")
+```
+
+La differenza rispetto al corpus iniziale è che il tokenizer ha preso le 10 parole più frequenti. Il parametro *num_words* va settato correttamente.
+
+# Padding
+
+Costruiamo delle sequenze tutte con la stessa lunghezza, ai fini dell'addestramento del modello.
+
+```{python}
+maxlen = len(max(sequences, key=len))
+padded_sequences = pad_sequences(
+  sequences,
+  maxlen=maxlen,
+  padding='pre' # alternative "post"
+  )
+
+padded_sequences
+```
+
+Padding = aggiungere zeri all'inizio o alla fine della sequenza, in base alla sequenza più lunga.
+
+# Embedding
+
+Layer che consente di costurire sequenze più performanti per le RNN.
+
+```{python}
+corpus = ['ristorante pessimo',
+         'piatto di pasta scondito',
+         'pizza squisita, ci tornerò',
+         'la pasta scotta e scondita',
+         'miglior pizzeria in zona',
+         'consigliato, pizza buona',
+         'bravi. pizza molto buona.',
+         'pasta cattiva. Sconsigliato']
+
+y =['negativa','negativa','positiva','negativa','positiva','positiva','positiva','negativa']
+```
+
+```{python}
+tokenizer = Tokenizer(num_words= 25)
+tokenizer.fit_on_texts(corpus)
+vocabulary_size = len(tokenizer.word_index)+1
+print(f"Vocabulary size: {vocabulary_size}")
+```
+
+24 parole + 1 per il padding.
+
+```{python}
+sequences = tokenizer.texts_to_sequences(corpus)
+max_len = len(max(sequences, key=len))
+padded_sequences = pad_sequences(sequences, maxlen=max_len)
+print(f"padded_sequences: {padded_sequences}")
+print(f"max len: {max_len}")
+```
+
+Ora cerchiamo di costruire l'embedding, quindi prima ci serve una SNN.
+```{python}
+clear_session()
+#Simple NN for embedding
+model = Sequential()
+model.add(Embedding(
+  input_dim=vocabulary_size,
+  output_dim=2,
+  input_shape=(max_len,)
+  ))
+model.summary()
+```
+
+```{python}
+embeddings = model.predict(padded_sequences)
+```
+
+Per dare contesto:
+```{python}
+embeddings[0]
+```
+
+Il primo embedding è relativo al primo documento e sono le 5 caselle della sequenza, costitute da 2 elementi (x, y).
+
+```{python}
+embeddings.shape
+```
+
+Tensore di 8 documenti, ognuno con 5 parole, ognuna rappresentata da 2 elementi.
+
+```{python}
+fig, ax = plt.subplots()
+for i, w in enumerate(embeddings[1]):
+  ax.scatter(w[0], w[1])
+  ax.annotate(str(i), (w[0], w[1]))
+plt.show()
+plt.close
+```
+
+# RNN
+
+Embedding aggiorna i pesi andando avanti con le epoche. Se risuciamo ad imparare se gli elementi della parola sono positivi o negativi, possiamo usare l'embedding per fare sentiment analysis.
+Innanzittutto, facciamo embedding della ground truth (y).
+
+
+```{python}
+from sklearn.preprocessing import LabelEncoder
+le = LabelEncoder()
+y = le.fit_transform(y)
+y = np.asarray(y).astype('float32').reshape((-1,1))
+```
+
+Definiamo un modello neurale con un layer di embedding e un layer di output Denso con un solo neurone e una sigmoide.
+
+
+```{python}
+from keras.layers import Dense
+from keras.backend import clear_session
+
+clear_session()
+model = Sequential()
+model.add(Embedding(
+  input_dim=vocabulary_size,
+  output_dim=2,
+  input_shape=(1,)
+  ))
+model.add(Dense(1, activation="sigmoid"))
+model.summary()
+```
+
+```{python}
+model.compile(
+  optimizer='adam',
+  loss="categorical_crossentropy",
+  metrics=["accuracy"]
+)
+```
+
+Per ora non ci interessa la performace del modello, quanto il training. Quello che prenderemo non sarà per predire altre recensioni, ma se l'embedding è in grado di catturare il sentiment.
+
+```{python}
+print(f"output shape: {padded_sequences.shape}")
+print(f"target shape: {y.shape}")
+```
+
+## Fit the model building from zero
+
+```{python}
+model.fit(padded_sequences, y, epochs=10)
+```

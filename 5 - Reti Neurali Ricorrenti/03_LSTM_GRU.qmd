@@ -1,0 +1,251 @@
+---
+title: "LSTM GRU RNN"
+author: "Simone Brazzi"
+jupyter: "r-tf"
+format:
+  html:
+    theme:
+      dark: "darkly"
+      light: "flatly"
+execute: 
+  warning: false
+self_contained: true
+toc: true
+toc-depth: 2
+number-sections: true
+editor: 
+  markdown: 
+    wrap: sentence
+editor_options: 
+  chunk_output_type: console
+---
+
+# Sentiment Analysis
+```{python}
+import warnings
+warnings.filterwarnings("ignore")
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+import pandas as pd
+import numpy as np
+import tensorflow as tf
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Embedding, SimpleRNN, Dense, GRU, Bidirectional
+from tensorflow.keras.backend import clear_session
+```
+
+# IMBD dataset
+
+[link](https://www.kaggle.com/datasets/lakshmi25npathi/imdb-dataset-of-50k-movie-reviews)
+50k recensioni con una colonne di sentiment positivo o negativo.
+
+```{python}
+path = "/Users/simonebrazzi/datasets/IMDB Dataset.csv"
+df = pd.read_csv(path)
+df.head()
+```
+
+```{python}
+df = df.sample(10000, random_state=1)
+```
+
+```{python}
+x = df.review.values
+y = df.sentiment.values
+
+le = LabelEncoder()
+y = le.fit_transform(y)
+
+xtrain, xtest, ytrain, ytest = train_test_split(
+  x, 
+  y,
+  test_size=.2,
+  random_state=1
+)
+```
+
+Instanzio un oggetto tokenizer, per costruire la sequenza in modo corretto a partire dal dato non strutturato (il testo).
+```{python}
+tokenizer = Tokenizer(num_words=10000, oov_token="<OOV>")
+```
+
+Costruisco il vocabolario
+```{python}
+tokenizer.fit_on_texts(xtrain)
+```
+
+Costruisco la sequenza per train e test basandomi sul vocabolario costruito con il tokenizer.
+```{python}
+train_seq = tokenizer.texts_to_sequences(xtrain)
+test_seq = tokenizer.texts_to_sequences(xtest)
+```
+
+```{python}
+vocabulary = len(tokenizer.word_index) + 1
+vocabulary
+```
+
+Troviamo la max len per le sequenze in train per paddare.
+```{python}
+maxlen = len(max(train_seq, key=len))
+maxlen
+```
+Con questo si evita il *vanishing gradient*.
+
+Paddiamo le sequenze basandosi con la max len trovata.
+```{python}
+padded_train_sequences = pad_sequences(train_seq, maxlen=maxlen)
+padded_test_sequences = pad_sequences(test_seq, maxlen=maxlen)
+```
+
+```{python}
+padded_train_sequences.shape
+```
+8000 sequenze di train con max len di 1853, di cui molte paddate con diversi zeri per arrivare a 1853.
+
+Fino a qui è tutto uguale a una vanilla RNN.
+
+# LSTM RNN
+
+Lo strato LSTM è un tipo di RNN che è in grado di imparare dipendenze a lungo termine. Questo è dovuto al fatto che lo strato LSTM è in grado di memorizzare informazioni per un lungo periodo di tempo.
+
+```{python}
+from tensorflow.models import Sequential
+from tensorflow.keras.layers import LSTM, Embedding, Dense
+
+model_LSTM = Sequential()
+model_LSTM.add(Embedding(
+  input_dim=vocabulary,
+  output_dim=128,
+  input_shape=(maxlen,)
+  ))
+model_LSTM.add(LSTM(64, activation="tanh"))
+model_LSTM.add(Dense(1, activation="sigmoid"))
+model_LSTM.summary()
+```
+
+Il layer LSTM ha diversi metodi. Interessante la funzione di attivazione:
+- sigmoid
+- dropout ricorrente su ogni cella interna.
+
+Per ora mettiamo solo la dimensione delle celle che ci serve e attivazione di default.
+
+```{python}
+model_LSTM.compile(
+  optimizer="rmsprop", # attivazione di default per RNN
+  loss="binary_crossentropy",
+  metrics=["accuracy"]
+)
+```
+
+```{python}
+model_LSTM.fit(
+  padded_train_sequences,
+  ytrain,
+  epochs=5,
+  validation_split=.2,
+  batch_size=256
+)
+```
+
+```{python}
+model_LSTM.evaluate(
+  padded_test_sequences,
+  ytest
+)
+```
+
+L'andamento di qursto modello è molto simile a quello di una vanilla RNN, ma lo ha sovraperformato. Queste sequenxe sono molto lunghe e LSTM è in grado di imparare dipendenze a lungo termine, quindi è in grado di imparare meglio di una vanilla RNN. Questo è possibile perché evita il vanishing gradient.
+
+# GRU RNN
+
+```{python}
+model_GRU = Sequential()
+model_GRU.add(Embedding(
+  input_dim=vocabulary,
+  output_dim=128,
+  input_shape=(maxlen,)
+  ))
+model_GRU.add(LSTM(64, activation="tanh"))
+model_GRU.add(Dense(1, activation="sigmoid"))
+model_GRU.summary()
+```
+
+```{python}
+model_GRU.compile(
+  optimizer="rmsprop", # attivazione di default per RNN
+  loss="binary_crossentropy",
+  metrics=["accuracy"]
+  )
+```
+
+```{python}
+model_GRU.fit(
+  padded_train_sequences,
+  ytrain,
+  epochs=5,
+  validation_split=.2,
+  batch_size=256
+)
+```
+
+```{python}
+model_GRU.evaluate(
+  padded_test_sequences,
+  ytest
+) 
+```
+La GRU ha una performance minore rispetto la LSTM, anche se leggermente più veloce. La GRU è un tipo di RNN che è in grado di imparare dipendenze a lungo termine. Questo è dovuto al fatto che lo strato GRU è in grado di memorizzare informazioni per un lungo periodo di tempo.
+
+# Bidirectional LSTM
+
+Il layer bidirezionale consente di valutare il contesto dal tempo t al tempo t+1 e viceversa. Questo è utile per le sequenze di testo, in cui il **contesto** può essere importante sia in avanti che all'indietro.
+Il layer può essere LSTM, GRU o vanilla RNN.
+
+```{python}
+clear_session()
+model_BiLSTM = Sequential()
+model_BiLSTM.add(Embedding(
+  input_dim=vocabulary,
+  output_dim=128,
+  input_shape=(maxlen,)
+  ))
+model_BiLSTM.add(LSTM(64, activation="tanh"))
+model_BiLSTM.add(Bidirectional(LSTM(64,activation='tanh')))
+model_BiLSTM.add(Dense(1, activation="sigmoid"))
+model_BiLSTM.summary()
+```
+
+
+```{python}
+model_BiLSTM.compile(
+  optimizer="rmsprop", # attivazione di default per RNN
+  loss="binary_crossentropy",
+  metrics=["accuracy"]
+  )
+```
+
+```{python}
+model_BiLSTM.fit(
+  padded_train_sequences,
+  ytrain,
+  epochs=5,
+  validation_split=.2,
+  batch_size=256
+)
+```
+
+```{python}
+model_BiLSTM.evaluate(
+  padded_test_sequences,
+  ytest
+) 
+```
