@@ -1,0 +1,119 @@
+---
+title: "Mixed RNN"
+author: "Simone Brazzi"
+jupyter: "tf"
+format:
+  html:
+    theme:
+      dark: "darkly"
+      light: "flatly"
+execute: 
+  warning: false
+self_contained: true
+toc: true
+toc-depth: 2
+number-sections: true
+editor: 
+  markdown: 
+    wrap: sentence
+editor_options: 
+  chunk_output_type: console
+---
+
+# Setup
+```{python}
+import warnings
+warnings.filterwarnings("ignore")
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from textwrap import wrap
+import pickle
+
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import Dense, LSTM, Input
+from tensorflow.keras.applications import VGG16
+from tensorflow.keras.applications.vgg16 import preprocess_input
+
+from tensorflow.keras.preprocessing.image import load_img, img_to_array
+```
+
+```{python}
+def readImage(path, img_size=224):
+  img = load_img(path, color_mode="rgb", target_size=(img_size, img_size))
+  img = img_to_array(img)
+  img = img / 255.
+  
+  return img
+
+def display_images(x):
+    fig, axes = plt.subplots(5, 5, figsize=(20, 20))
+    fig.subplots_adjust(hspace=0.5)
+
+    for i, ax in enumerate(axes.flat):
+        image = readImage(f"{path}Images/{x.image[i]}")  # Assuming readImage function is defined elsewhere
+        ax.imshow(image)
+        ax.set_title("\n".join(wrap(x.caption[i], 20)), loc="right")
+        ax.axis("off")
+
+    plt.show() 
+```
+
+
+# Flickr Dataset
+```{python}
+path = "/Users/simonebrazzi/datasets/flickr8k/"
+df = pd.read_csv(path + "captions.txt")
+df.head()
+```
+
+```{python}
+print(f"{path}Images/{df.image[0]}")
+```
+
+# Transfer Learning con VGG16
+```{python}
+vgg16 = VGG16()
+vgg16 = Model(
+  inputs=vgg16.inputs,
+  outputs=vgg16.layers[-2].output
+  )
+vgg16.summary()
+```
+
+```{python}
+image_features = {}
+for name in os.listdir(path + "Images/")[:1]:
+  filename = path + "Images/" + df.image[name] 
+  image = load_img(filename, target_size=(224, 224))
+  image = img_to_array(image)
+  image = image.reshape(1, image.shape[0], image.shape[1], image.shape[2])
+  image = preprocess_input(image)
+  feature = vgg16.predict(image, verbose=0)
+  feature = feature.flatten()
+  
+  image_features[filename] = feature
+  
+```
+
+
+
+Save to pickle
+```{python}
+with open("/Users/simonebrazzi/model/vgg16_MRNN_image_features.pkl", "wb") as f:
+  pickle.dump(image_features, f)
+```
+
+Load from pickle
+```{python}
+with open("/Users/simonebrazzi/model/vgg16_MRNN_image_features.pkl", "rb") as f:
+  image_features = pickle.load(f)
+```
+
+

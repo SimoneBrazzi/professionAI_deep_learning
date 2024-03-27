@@ -1,0 +1,149 @@
+---
+title: "Optical Character Recognition"
+author: "Simone Brazzi"
+jupyter: "tf"
+format:
+  html:
+    theme:
+      dark: "darkly"
+      light: "flatly"
+execute: 
+  warning: false
+self_contained: true
+toc: true
+toc-depth: 2
+number-sections: true
+editor: 
+  markdown: 
+    wrap: sentence
+editor_options: 
+  chunk_output_type: console
+---
+
+# Setup
+```{python}
+import warnings
+warnings.filterwarnings("ignore")
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+import tensorflow as tf
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+```
+
+```{python}
+path = "/Users/simonebrazzi/datasets/emnist/"
+os.listdir(path)
+train_df = pd.read_csv(path + "emnist_train.csv")
+train_df.head()
+```
+784 colonne o features. matrice 28x28, dunque immagine.
+char è la label, dunque di che carattere si tratta. Viene associato un valore numerico alla label (lettera).
+
+```{python}
+label_dict = {
+  0: '0',
+ 1: '1',
+ 2: '2',
+ 3: '3',
+ 4: '4',
+ 5: '5',
+ 6: '6',
+ 7: '7',
+ 8: '8',
+ 9: '9',
+ 10: 'A',
+ 11: 'B',
+ 12: 'C',
+ 13: 'D',
+ 14: 'E',
+ 15: 'F',
+ 16: 'G',
+ 17: 'H',
+ 18: 'I',
+ 19: 'J',
+ 20: 'K',
+ 21: 'L',
+ 22: 'M',
+ 23: 'N',
+ 24: 'O',
+ 25: 'P',
+ 26: 'Q',
+ 27: 'R',
+ 28: 'S',
+ 29: 'T',
+ 30: 'U',
+ 31: 'V',
+ 32: 'W',
+ 33: 'X',
+ 34: 'Y',
+ 35: 'Z',
+ 36: 'a',
+ 37: 'b',
+ 38: 'd',
+ 39: 'e',
+ 40: 'f',
+ 41: 'g',
+ 42: 'h',
+ 43: 'n',
+ 44: 'q',
+ 45: 'r',
+ 46: 't'
+ }
+```
+
+# Preprocessing
+```{python}
+W, H=28,28
+X = train_df.iloc[:,2:]
+
+def reshape_and_rotate(image):
+    W = 28
+    H = 28
+    image = image.reshape(W, H)
+    image = np.fliplr(image)
+    image = np.rot90(image)
+    return image
+```
+
+```{python}
+sample_image = train_df.iloc[1,2:]
+sample_label = train_df.iloc[1]['char']
+sample_image.shape,sample_label
+```
+
+```{python}
+X = np.apply_along_axis(reshape_and_rotate, 1, X.values.astype('float32'))
+X = X / 255
+```
+
+## Ground Truth
+```{python}
+plt.figure(figsize=(10,10))
+for i in range(1,20):
+    plt.subplot(1,20,i)
+    plt.imshow(X[i].reshape(28, 28), cmap=plt.cm.gray)
+    plt.title(train_df.iloc[i]['char'])
+    plt.axis('off')
+plt.show()
+```
+
+
+Costruire un modello ibrido per il riconoscimento di caratteri (OCR).
+1. Il modello deve comprendere almeno un layer convoluzionale in input e successivament eun layer ricorrente.
+2. Utilizza un layer Reshape tra la parte convoluzionale e lo strato ricorrente (risultato 1D)
+
+
+
+
+
+
+
+
+
+
